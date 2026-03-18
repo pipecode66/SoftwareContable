@@ -208,13 +208,14 @@
 }
 
 .panel-import,
-.panel-payload,
-.panel-sources {
+.panel-export,
+.panel-sources,
+.panel-notes {
   grid-column: span 12;
 }
 
 .panel-rules,
-.panel-api {
+.panel-ops {
   grid-column: span 7;
 }
 
@@ -245,7 +246,7 @@
 
 .import-grid,
 .detail-hero,
-.api-grid,
+.ops-grid,
 .payload-grid,
 .sources-grid {
   display: grid;
@@ -601,7 +602,7 @@ button:focus,
 
 @media (max-width: 1240px) {
   .panel-rules,
-  .panel-api,
+  .panel-ops,
   .panel-list,
   .panel-detail {
     grid-column: span 12;
@@ -633,7 +634,7 @@ button:focus,
   .hero-card,
   .import-grid,
   .detail-hero,
-  .api-grid,
+  .ops-grid,
   .payload-grid,
   .sources-grid,
   .rules-table {

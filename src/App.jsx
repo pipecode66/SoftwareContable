@@ -6,40 +6,30 @@ import {
   FIELD_DEFINITIONS,
   LEGAL_TIMELINE,
   SOURCE_LINKS,
-  buildAleluyaPayload,
   buildConceptCatalog,
+  buildEmployeeReport,
   buildEmployees,
-  buildPayloadFormData,
+  buildOperationalAlerts,
   detectColumnMap,
-  flattenAleluyaConcepts,
   formatCurrency,
   formatNumber,
   getNightShiftStartHour,
   getSundayRate,
   getWeeklyHours,
   normalizeText,
+  summarizeByConcept,
   summarizeEmployees,
   SAMPLE_ROWS,
 } from "./lib/overtime";
 
 const STORAGE_KEYS = {
   session: "sandeq.session",
-  connector: "sandeq.connector",
   settings: "sandeq.settings",
 };
 
 const APP_CREDENTIALS = {
   email: "admin@sandeli.com",
   password: "sandeli12@",
-};
-
-const DEFAULT_CONNECTOR = {
-  baseUrl: "https://api.aleluya.com",
-  email: "",
-  secret: "",
-  bearerToken: "",
-  companyId: "",
-  periodId: "",
 };
 
 function loadStorage(key, fallback) {
@@ -81,42 +71,12 @@ function getObjectRows(sheetRows) {
     );
 }
 
-function getArrayFromPayload(payload, pathCandidates) {
-  for (const path of pathCandidates) {
-    const value = path.split(".").reduce((current, key) => current?.[key], payload);
-    if (Array.isArray(value)) {
-      return value;
-    }
-  }
-
-  return [];
-}
-
-function getApiErrorMessage(payload, fallback) {
-  if (Array.isArray(payload?.error) && payload.error[0]?.message) {
-    return payload.error[0].message;
-  }
-
-  if (typeof payload === "string" && payload.trim()) {
-    return payload;
-  }
-
-  return fallback;
-}
-
-function buildBasicAuth(email, secret) {
-  return window.btoa(unescape(encodeURIComponent(`${email}:${secret}`)));
-}
-
 function App() {
   const [session, setSession] = useState(() =>
     loadStorage(STORAGE_KEYS.session, {
       isAuthenticated: false,
       email: "",
     }),
-  );
-  const [connector, setConnector] = useState(() =>
-    loadStorage(STORAGE_KEYS.connector, DEFAULT_CONNECTOR),
   );
   const [settings, setSettings] = useState(() =>
     loadStorage(STORAGE_KEYS.settings, DEFAULT_SETTINGS),
@@ -135,20 +95,12 @@ function App() {
   const [employees, setEmployees] = useState([]);
   const [selectedEmployeeId, setSelectedEmployeeId] = useState("");
   const [search, setSearch] = useState("");
-  const [busyAction, setBusyAction] = useState("");
   const [logs, setLogs] = useState([
     {
       type: "info",
-      message:
-        "Base demo cargada. Puedes importar Excel o conectar Aleluya para operar con datos reales.",
+      message: "Base demo cargada. Puedes importar Excel o continuar con la base de ejemplo.",
     },
   ]);
-  const [companies, setCompanies] = useState([]);
-  const [periods, setPeriods] = useState([]);
-  const [payrolls, setPayrolls] = useState([]);
-  const [aleluyaConcepts, setAleluyaConcepts] = useState([]);
-  const [existingItemsByPayroll, setExistingItemsByPayroll] = useState({});
-  const [lastSyncResult, setLastSyncResult] = useState(null);
   const [isPending, startTransition] = useTransition();
   const deferredSearch = useDeferredValue(search);
 
@@ -157,27 +109,30 @@ function App() {
   }, [session]);
 
   useEffect(() => {
-    saveStorage(STORAGE_KEYS.connector, connector);
-  }, [connector]);
-
-  useEffect(() => {
     saveStorage(STORAGE_KEYS.settings, settings);
   }, [settings]);
 
   useEffect(() => {
     startTransition(() => {
-      const nextEmployees = buildEmployees(rows, mapping, settings, payrolls);
+      const nextEmployees = buildEmployees(rows, mapping, settings);
       setEmployees(nextEmployees);
 
       if (!nextEmployees.some((employee) => employee.id === selectedEmployeeId)) {
         setSelectedEmployeeId(nextEmployees[0]?.id || "");
       }
     });
-  }, [mapping, payrolls, rows, selectedEmployeeId, settings, startTransition]);
+  }, [mapping, rows, selectedEmployeeId, settings, startTransition]);
 
   const headers = Object.keys(rows[0] || {});
   const selectedEmployee =
     employees.find((employee) => employee.id === selectedEmployeeId) || null;
+  const contextDate =
+    selectedEmployee?.periodDate || settings.periodDate || DEFAULT_SETTINGS.periodDate;
+  const summary = summarizeEmployees(employees);
+  const conceptSummary = summarizeByConcept(employees);
+  const alerts = buildOperationalAlerts(employees);
+  const legalCatalog = buildConceptCatalog(contextDate);
+  const employeeReport = buildEmployeeReport(selectedEmployee);
 
   const filteredEmployees = employees.filter((employee) => {
     const searchValue = normalizeText(deferredSearch);
@@ -188,29 +143,13 @@ function App() {
 
     return (
       normalizeText(employee.employeeName).includes(searchValue) ||
-      normalizeText(employee.documentNumber).includes(searchValue)
+      normalizeText(employee.documentNumber).includes(searchValue) ||
+      normalizeText(employee.internalCode).includes(searchValue)
     );
   });
 
-  const summary = summarizeEmployees(employees);
-  const contextDate =
-    selectedEmployee?.periodDate || settings.periodDate || DEFAULT_SETTINGS.periodDate;
-  const legalCatalog = buildConceptCatalog(contextDate);
-  const payloadPreview =
-    selectedEmployee && aleluyaConcepts.length > 0
-      ? buildAleluyaPayload(
-          selectedEmployee,
-          aleluyaConcepts,
-          existingItemsByPayroll[selectedEmployee.resolvedPayrollId] || [],
-        )
-      : { items: [], unresolved: selectedEmployee?.breakdown?.map((line) => line.label) || [] };
-
   function pushLog(message, type = "info") {
     setLogs((currentLogs) => [{ message, type }, ...currentLogs].slice(0, 8));
-  }
-
-  function updateConnector(field, value) {
-    setConnector((current) => ({ ...current, [field]: value }));
   }
 
   function updateSettings(field, value) {
@@ -248,33 +187,9 @@ function App() {
       isAuthenticated: false,
       email: "",
     });
-    setConnector((current) => ({
-      ...current,
-      bearerToken: "",
-    }));
-  }
-
-  async function aleluyaRequest(path, options = {}) {
-    const response = await fetch(`${connector.baseUrl}${path}`, options);
-    const raw = await response.text();
-    let payload = null;
-
-    try {
-      payload = raw ? JSON.parse(raw) : null;
-    } catch {
-      payload = raw;
-    }
-
-    if (!response.ok) {
-      throw new Error(getApiErrorMessage(payload, `${response.status} ${response.statusText}`));
-    }
-
-    return payload;
   }
 
   async function runAction(label, task) {
-    setBusyAction(label);
-
     try {
       await task();
     } catch (error) {
@@ -285,8 +200,6 @@ function App() {
       }
 
       pushLog(message, "error");
-    } finally {
-      setBusyAction("");
     }
   }
 
@@ -343,220 +256,19 @@ function App() {
     pushLog("La base cargada fue limpiada. Puedes importar un nuevo Excel.", "info");
   }
 
-  async function handleLogin() {
-    await runAction("crear sesion", async () => {
-      if (!connector.email || !connector.secret) {
-        throw new Error("Ingresa correo y API token o password para crear la sesion.");
-      }
-
-      const payload = await aleluyaRequest("/v1/sessions", {
-        method: "POST",
-        headers: {
-          Authorization: `Basic ${buildBasicAuth(connector.email, connector.secret)}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          email: connector.email,
-          password: connector.secret,
-        }),
-      });
-
-      const nextToken = payload?.data?.token || "";
-
-      if (!nextToken) {
-        throw new Error("Aleluya no devolvio un bearer token utilizable.");
-      }
-
-      updateConnector("bearerToken", nextToken);
-      pushLog("Sesion Aleluya creada y bearer token almacenado localmente.", "success");
-    });
-  }
-
-  async function handleFetchCompanies() {
-    await runAction("cargar empresas", async () => {
-      if (!connector.bearerToken) {
-        throw new Error("Primero crea sesion o pega un bearer token valido.");
-      }
-
-      const payload = await aleluyaRequest("/v1/companies", {
-        headers: {
-          Authorization: `Bearer ${connector.bearerToken}`,
-        },
-      });
-
-      const nextCompanies = getArrayFromPayload(payload, ["data.companies", "data"]);
-      setCompanies(nextCompanies);
-
-      if (!connector.companyId && nextCompanies[0]?.id) {
-        updateConnector("companyId", nextCompanies[0].id);
-      }
-
-      pushLog(`Empresas cargadas: ${nextCompanies.length}.`, "success");
-    });
-  }
-
-  async function handleFetchPeriods() {
-    await runAction("cargar periodos", async () => {
-      if (!connector.companyId) {
-        throw new Error("Selecciona o pega un company_id antes de cargar periodos.");
-      }
-
-      const payload = await aleluyaRequest(
-        `/v1/${connector.companyId}/periods?per_page=50`,
-        {
-          headers: {
-            Authorization: `Bearer ${connector.bearerToken}`,
-          },
-        },
-      );
-
-      const nextPeriods = getArrayFromPayload(payload, ["data"]);
-      setPeriods(nextPeriods);
-
-      if (!connector.periodId && nextPeriods[0]?.id) {
-        updateConnector("periodId", nextPeriods[0].id);
-      }
-
-      pushLog(`Periodos cargados: ${nextPeriods.length}.`, "success");
-    });
-  }
-
-  async function handleFetchPayrolls() {
-    await runAction("cargar nominas", async () => {
-      if (!connector.companyId) {
-        throw new Error("Define company_id antes de consultar nominas.");
-      }
-
-      const payload = await aleluyaRequest(
-        `/v1/${connector.companyId}/payrolls?per_page=100&page=1`,
-        {
-          headers: {
-            Authorization: `Bearer ${connector.bearerToken}`,
-          },
-        },
-      );
-
-      const nextPayrolls = getArrayFromPayload(payload, ["data.payrolls", "data"]);
-      setPayrolls(nextPayrolls);
-      pushLog(`Nominas cargadas: ${nextPayrolls.length}. Se actualizo el auto-match con el Excel.`, "success");
-    });
-  }
-
-  async function handleFetchConcepts() {
-    await runAction("cargar conceptos", async () => {
-      if (!connector.companyId || !connector.periodId) {
-        throw new Error("Necesitas company_id y period_id para consultar conceptos overtime.");
-      }
-
-      const payload = await aleluyaRequest(
-        `/v1/${connector.companyId}/payroll_concepts?category=overtime&period_id=${connector.periodId}`,
-        {
-          headers: {
-            Authorization: `Bearer ${connector.bearerToken}`,
-          },
-        },
-      );
-
-      const nextConcepts = flattenAleluyaConcepts(payload);
-      setAleluyaConcepts(nextConcepts);
-      pushLog(`Conceptos overtime cargados: ${nextConcepts.length}.`, "success");
-    });
-  }
-
-  async function handleFetchExistingItems() {
-    await runAction("consultar overtime actual", async () => {
-      if (!selectedEmployee?.resolvedPayrollId) {
-        throw new Error("La persona seleccionada no tiene payroll_id resuelto.");
-      }
-
-      const payload = await aleluyaRequest(
-        `/v1/${connector.companyId}/payrolls/${selectedEmployee.resolvedPayrollId}/overtime_items?category=overtime`,
-        {
-          headers: {
-            Authorization: `Bearer ${connector.bearerToken}`,
-          },
-        },
-      );
-
-      const existingItems = getArrayFromPayload(payload, ["data"]);
-      setExistingItemsByPayroll((current) => ({
-        ...current,
-        [selectedEmployee.resolvedPayrollId]: existingItems,
-      }));
-
-      pushLog(
-        `Items overtime consultados para ${selectedEmployee.employeeName}: ${existingItems.length}.`,
-        "success",
-      );
-    });
-  }
-
-  async function handleSyncSelected() {
-    await runAction("sincronizar persona", async () => {
-      if (!selectedEmployee) {
-        throw new Error("Selecciona una persona antes de sincronizar.");
-      }
-
-      if (!selectedEmployee.resolvedPayrollId) {
-        throw new Error("La persona no tiene payroll_id resuelto para Aleluya.");
-      }
-
-      if (!aleluyaConcepts.length) {
-        throw new Error("Carga primero los conceptos overtime desde Aleluya.");
-      }
-
-      const payload = buildAleluyaPayload(
-        selectedEmployee,
-        aleluyaConcepts,
-        existingItemsByPayroll[selectedEmployee.resolvedPayrollId] || [],
-      );
-
-      if (!payload.items.length) {
-        throw new Error("No hay items sincronizables. Revisa el mapeo o los conceptos Aleluya.");
-      }
-
-      const formData = buildPayloadFormData(payload.items);
-      const response = await aleluyaRequest(
-        `/v1/${connector.companyId}/payrolls/${selectedEmployee.resolvedPayrollId}/overtime_items`,
-        {
-          method: "PUT",
-          headers: {
-            Authorization: `Bearer ${connector.bearerToken}`,
-            "Content-Type": "application/x-www-form-urlencoded",
-          },
-          body: formData.toString(),
-        },
-      );
-
-      setLastSyncResult(response);
-      pushLog(
-        `Sincronizacion enviada para ${selectedEmployee.employeeName} con ${payload.items.length} items.`,
-        "success",
-      );
-
-      if (payload.unresolved.length) {
-        pushLog(
-          `Quedaron lineas sin match automatico: ${payload.unresolved.join(", ")}.`,
-          "warning",
-        );
-      }
-    });
-  }
-
-  async function handleCopyPayload() {
-    const payloadBody = {
-      payroll_id: selectedEmployee?.resolvedPayrollId || "",
-      items: payloadPreview.items,
-      unresolved: payloadPreview.unresolved,
-    };
-
-    if (!navigator.clipboard) {
-      pushLog("Este navegador no permite copiar automaticamente el payload.", "warning");
+  async function handleCopyReport() {
+    if (!employeeReport) {
+      pushLog("No hay una persona seleccionada para copiar el resumen.", "warning");
       return;
     }
 
-    await navigator.clipboard.writeText(JSON.stringify(payloadBody, null, 2));
-    pushLog("Payload copiado al portapapeles.", "success");
+    if (!navigator.clipboard) {
+      pushLog("Este navegador no permite copiar automaticamente el resumen.", "warning");
+      return;
+    }
+
+    await navigator.clipboard.writeText(JSON.stringify(employeeReport, null, 2));
+    pushLog("Resumen interno copiado al portapapeles.", "success");
   }
 
   if (!session.isAuthenticated) {
@@ -584,15 +296,13 @@ function App() {
               <input
                 type="email"
                 value={loginForm.email}
-                onChange={(event) =>
-                  {
-                    setLoginError("");
-                    setLoginForm((current) => ({
-                      ...current,
-                      email: event.target.value,
-                    }));
-                  }
-                }
+                onChange={(event) => {
+                  setLoginError("");
+                  setLoginForm((current) => ({
+                    ...current,
+                    email: event.target.value,
+                  }));
+                }}
                 placeholder="admin@sandeli.com"
                 autoComplete="username"
               />
@@ -602,15 +312,13 @@ function App() {
               <input
                 type="password"
                 value={loginForm.password}
-                onChange={(event) =>
-                  {
-                    setLoginError("");
-                    setLoginForm((current) => ({
-                      ...current,
-                      password: event.target.value,
-                    }));
-                  }
-                }
+                onChange={(event) => {
+                  setLoginError("");
+                  setLoginForm((current) => ({
+                    ...current,
+                    password: event.target.value,
+                  }));
+                }}
                 placeholder="Ingresa tu contrasena"
                 autoComplete="current-password"
               />
@@ -639,13 +347,13 @@ function App() {
 
           <p className="hero-text">
             Software contable enfocado en horas extras y recargos, con importacion
-            de Excel, tablero operativo, reglas laborales colombianas y puente listo
-            para sincronizar con la API de Aleluya.
+            de Excel, tablero operativo, reglas laborales colombianas y control
+            interno para revision y cierre.
           </p>
 
           <div className="hero-tags">
             <span>Excel-first</span>
-            <span>Aleluya-ready</span>
+            <span>Control interno</span>
             <span>Colombia 2025-2027</span>
             <span>Desarrollado por Zivra Studio</span>
             <button className="button ghost button-inline" onClick={handleLocalLogout}>
@@ -663,7 +371,7 @@ function App() {
           <div className="stat-card">
             <span className="stat-label">Horas extra</span>
             <strong>{formatNumber(summary.totalOvertimeHours)}</strong>
-            <small>Solo lineas de overtime</small>
+            <small>Solo conceptos de hora extra</small>
           </div>
           <div className="stat-card">
             <span className="stat-label">Recargos</span>
@@ -866,7 +574,7 @@ function App() {
             <input
               className="search-input"
               type="search"
-              placeholder="Buscar por nombre o documento"
+              placeholder="Buscar por nombre, documento o codigo"
               value={search}
               onChange={(event) => setSearch(event.target.value)}
             />
@@ -882,6 +590,7 @@ function App() {
                 <div>
                   <strong>{employee.employeeName || "Sin nombre"}</strong>
                   <span>{employee.documentNumber || "Sin documento"}</span>
+                  <small>{employee.internalCode || "Sin codigo interno"}</small>
                 </div>
                 <div className="employee-item-meta">
                   <span>{formatCurrency(employee.totalValue)}</span>
@@ -926,8 +635,8 @@ function App() {
                       <dd>{formatNumber(selectedEmployee.monthlyHours)}</dd>
                     </div>
                     <div>
-                      <dt>Payroll Aleluya</dt>
-                      <dd>{selectedEmployee.resolvedPayrollId || "Pendiente"}</dd>
+                      <dt>Codigo interno</dt>
+                      <dd>{selectedEmployee.internalCode || "Pendiente"}</dd>
                     </div>
                   </dl>
                 </article>
@@ -993,122 +702,63 @@ function App() {
           )}
         </section>
 
-        <section className="panel panel-api">
+        <section className="panel panel-ops">
           <div className="panel-heading">
             <div>
-              <p className="eyebrow">5. Integracion</p>
-              <h2>Aleluya connector</h2>
+              <p className="eyebrow">5. Control interno</p>
+              <h2>Alertas y consolidado operativo</h2>
             </div>
-            <span className="secure-note">El token se guarda solo en este navegador.</span>
           </div>
 
-          <div className="form-grid">
-            <label>
-              Base URL
-              <input
-                type="url"
-                value={connector.baseUrl}
-                onChange={(event) => updateConnector("baseUrl", event.target.value)}
-              />
-            </label>
-            <label>
-              Correo
-              <input
-                type="email"
-                value={connector.email}
-                onChange={(event) => updateConnector("email", event.target.value)}
-              />
-            </label>
-            <label>
-              API token o password
-              <input
-                type="password"
-                value={connector.secret}
-                onChange={(event) => updateConnector("secret", event.target.value)}
-              />
-            </label>
-            <label>
-              Bearer token
-              <input
-                type="text"
-                value={connector.bearerToken}
-                onChange={(event) => updateConnector("bearerToken", event.target.value)}
-              />
-            </label>
-            <label>
-              company_id
-              <input
-                type="text"
-                value={connector.companyId}
-                onChange={(event) => updateConnector("companyId", event.target.value)}
-              />
-            </label>
-            <label>
-              period_id
-              <input
-                type="text"
-                value={connector.periodId}
-                onChange={(event) => updateConnector("periodId", event.target.value)}
-              />
-            </label>
-          </div>
-
-          <div className="button-row">
-            <button className="button primary" onClick={handleLogin}>
-              {busyAction === "crear sesion" ? "Conectando..." : "Crear sesion"}
-            </button>
-            <button className="button ghost" onClick={handleFetchCompanies}>
-              Cargar empresas
-            </button>
-            <button className="button ghost" onClick={handleFetchPeriods}>
-              Cargar periodos
-            </button>
-            <button className="button ghost" onClick={handleFetchPayrolls}>
-              Cargar nominas
-            </button>
-            <button className="button ghost" onClick={handleFetchConcepts}>
-              Cargar conceptos overtime
-            </button>
-            <button className="button ghost" onClick={handleFetchExistingItems}>
-              Consultar overtime actual
-            </button>
-            <button className="button primary" onClick={handleSyncSelected}>
-              Sincronizar persona
-            </button>
-          </div>
-
-          <div className="api-grid">
+          <div className="ops-grid">
             <article className="surface-card">
-              <h3>Contexto cargado</h3>
-              <ul className="mini-list">
-                <li>Empresas: {formatNumber(companies.length, 0)}</li>
-                <li>Periodos: {formatNumber(periods.length, 0)}</li>
-                <li>Nominas: {formatNumber(payrolls.length, 0)}</li>
-                <li>Conceptos overtime: {formatNumber(aleluyaConcepts.length, 0)}</li>
-              </ul>
-            </article>
-
-            <article className="surface-card">
-              <h3>Logs recientes</h3>
+              <h3>Alertas automaticas</h3>
               <ul className="log-list">
-                {logs.map((log, index) => (
-                  <li key={`log-${index}`} className={`log-item ${log.type}`}>
-                    {log.message}
+                {alerts.map((alert, index) => (
+                  <li key={`alert-${index}`} className={`log-item ${alert.type}`}>
+                    <strong>{alert.title}</strong>
+                    <span>{alert.detail}</span>
                   </li>
                 ))}
               </ul>
             </article>
+
+            <article className="surface-card">
+              <h3>Consolidado por concepto</h3>
+              <div className="table-shell mini-table">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Codigo</th>
+                      <th>Concepto</th>
+                      <th>Cantidad</th>
+                      <th>Valor</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {conceptSummary.map((item) => (
+                      <tr key={item.key}>
+                        <td>{item.short}</td>
+                        <td>{item.label}</td>
+                        <td>{formatNumber(item.quantity)}</td>
+                        <td>{formatCurrency(item.totalValue)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </article>
           </div>
         </section>
 
-        <section className="panel panel-payload">
+        <section className="panel panel-export">
           <div className="panel-heading">
             <div>
               <p className="eyebrow">6. Salida</p>
-              <h2>Payload de sincronizacion</h2>
+              <h2>Resumen interno exportable</h2>
             </div>
             <div className="panel-actions">
-              <button className="button ghost" onClick={handleCopyPayload}>
+              <button className="button ghost" onClick={handleCopyReport}>
                 Copiar JSON
               </button>
             </div>
@@ -1116,42 +766,21 @@ function App() {
 
           <div className="payload-grid">
             <article className="surface-card">
-              <h3>Match con conceptos Aleluya</h3>
-              {selectedEmployee ? (
-                <>
-                  <ul className="mini-list">
-                    {selectedEmployee.breakdown.map((line) => {
-                      const matched = aleluyaConcepts.find((concept) =>
-                        line.aleluyaCodes.includes(normalizeText(concept.coded_name)),
-                      );
-
-                      return (
-                        <li key={line.key}>
-                          <strong>{line.short}</strong>:{" "}
-                          {matched ? `${matched.name} (${matched.coded_name})` : "Sin match automatico"}
-                        </li>
-                      );
-                    })}
-                  </ul>
-                  {payloadPreview.unresolved.length ? (
-                    <p className="inline-warning">
-                      Pendientes: {payloadPreview.unresolved.join(", ")}
-                    </p>
-                  ) : null}
-                </>
-              ) : (
-                <p className="muted">Selecciona una persona para ver el match.</p>
-              )}
+              <h3>Resumen de cierre</h3>
+              <ul className="mini-list">
+                <li>Personas liquidadas: {formatNumber(summary.totalEmployees, 0)}</li>
+                <li>Horas extra acumuladas: {formatNumber(summary.totalOvertimeHours)}</li>
+                <li>Recargos acumulados: {formatNumber(summary.totalSurchargeHours)}</li>
+                <li>Valor total del periodo: {formatCurrency(summary.totalValue)}</li>
+              </ul>
             </article>
 
             <article className="surface-card">
-              <h3>JSON listo para auditoria</h3>
+              <h3>JSON de auditoria</h3>
               <pre className="payload-box">
                 {JSON.stringify(
-                  {
-                    payroll_id: selectedEmployee?.resolvedPayrollId || "",
-                    items: payloadPreview.items,
-                    last_sync: lastSyncResult?.data || null,
+                  employeeReport || {
+                    mensaje: "Selecciona una persona para generar el resumen interno.",
                   },
                   null,
                   2,
@@ -1183,6 +812,23 @@ function App() {
               </a>
             ))}
           </div>
+        </section>
+
+        <section className="panel panel-notes">
+          <div className="panel-heading">
+            <div>
+              <p className="eyebrow">7. Bitacora</p>
+              <h2>Actividad reciente</h2>
+            </div>
+          </div>
+
+          <ul className="log-list">
+            {logs.map((log, index) => (
+              <li key={`log-${index}`} className={`log-item ${log.type}`}>
+                {log.message}
+              </li>
+            ))}
+          </ul>
         </section>
       </main>
     </div>
