@@ -1,6 +1,7 @@
 import { useDeferredValue, useEffect, useState, useTransition } from "react";
 import readXlsxFile from "read-excel-file/browser";
 import "./App.css";
+import WorkforceModule from "./modules/workforce/WorkforceModule";
 import {
   DEFAULT_SETTINGS,
   FIELD_DEFINITIONS,
@@ -181,6 +182,7 @@ function App() {
     type: "info",
     message: "Base demo cargada. Puedes importar Excel o trabajar con el ejemplo inicial.",
   });
+  const [activeWorkspace, setActiveWorkspace] = useState("legacy");
   const [isPending, startTransition] = useTransition();
   const deferredSearch = useDeferredValue(search);
 
@@ -580,9 +582,9 @@ function App() {
           </div>
 
           <p className="hero-text">
-            Plataforma contable enfocada en horas extras y recargos, con importación
-            de Excel, cálculo operativo, consolidado por persona y salida directa a
-            PDF o Excel.
+            Plataforma contable enfocada en horas extras, recargos, turnos, novedades
+            y liquidación laboral, con importación de Excel, cálculo operativo,
+            consolidado por persona y un módulo ampliado de gestión interna.
           </p>
 
           <div className="hero-tags">
@@ -626,7 +628,23 @@ function App() {
         </section>
       ) : null}
 
-      <main className="dashboard-grid">
+      <nav className="workspace-tabs" aria-label="Módulos principales">
+        <button
+          className={`workspace-tab ${activeWorkspace === "legacy" ? "active" : ""}`}
+          onClick={() => setActiveWorkspace("legacy")}
+        >
+          Horas extras
+        </button>
+        <button
+          className={`workspace-tab ${activeWorkspace === "workforce" ? "active" : ""}`}
+          onClick={() => setActiveWorkspace("workforce")}
+        >
+          Gestión laboral
+        </button>
+      </nav>
+
+      {activeWorkspace === "legacy" ? (
+        <main className="dashboard-grid">
         <section className="panel panel-import">
           <div className="panel-heading">
             <div>
@@ -993,7 +1011,15 @@ function App() {
             </article>
           </div>
         </section>
-      </main>
+        </main>
+      ) : (
+        <WorkforceModule
+          currentUserEmail={session.email}
+          legacyEmployees={employees}
+          legacyFileName={fileName}
+          onNotice={showNotice}
+        />
+      )}
     </div>
   );
 }
