@@ -4,28 +4,26 @@ import "./App.css";
 import {
   DEFAULT_SETTINGS,
   FIELD_DEFINITIONS,
-  LEGAL_TIMELINE,
-  SOURCE_LINKS,
-  buildConceptCatalog,
-  buildEmployeeReport,
+  SAMPLE_ROWS,
   buildEmployees,
   buildOperationalAlerts,
   detectColumnMap,
   formatCurrency,
   formatNumber,
   getNightShiftStartHour,
-  getSundayRate,
   getWeeklyHours,
   normalizeText,
   summarizeByConcept,
   summarizeEmployees,
-  SAMPLE_ROWS,
 } from "./lib/overtime";
 
 const STORAGE_KEYS = {
-  session: "sandeq.session",
-  settings: "sandeq.settings",
+  session: "kaiko.session",
+  settings: "kaiko.settings",
 };
+
+const BRAND_NAME = "KAIKO";
+const BRAND_RGB = [159, 31, 239];
 
 const APP_CREDENTIALS = {
   email: "admin@sandeli.com",
@@ -71,6 +69,90 @@ function getObjectRows(sheetRows) {
     );
 }
 
+function buildExportBaseName(fileName) {
+  const rawName = String(fileName || "kaiko-horas-extras")
+    .replace(/\.[^.]+$/, "")
+    .trim();
+
+  return normalizeText(rawName) || "kaiko-horas-extras";
+}
+
+function buildSummarySheet(summary, fileName, contextDate) {
+  return [
+    [BRAND_NAME, "Resumen general"],
+    [],
+    ["Archivo base", fileName],
+    ["Fecha de referencia", contextDate],
+    ["Personas liquidadas", summary.totalEmployees],
+    ["Horas extra acumuladas", Number(summary.totalOvertimeHours.toFixed(2))],
+    ["Recargos acumulados", Number(summary.totalSurchargeHours.toFixed(2))],
+    ["Valor total estimado", Math.round(summary.totalValue)],
+  ];
+}
+
+function buildEmployeesSheet(employees) {
+  return [
+    [
+      "Empleado",
+      "Documento",
+      "Código interno",
+      "Período",
+      "Salario base",
+      "Valor hora",
+      "Horas extra",
+      "Recargos",
+      "Total",
+    ],
+    ...employees.map((employee) => [
+      employee.employeeName || "Sin nombre",
+      employee.documentNumber || "",
+      employee.internalCode || "",
+      employee.periodDate,
+      Math.round(employee.baseSalary || 0),
+      Math.round(employee.hourlyRate || 0),
+      Number(employee.overtimeHours.toFixed(2)),
+      Number(employee.surchargeHours.toFixed(2)),
+      Math.round(employee.totalValue),
+    ]),
+  ];
+}
+
+function buildConceptSheet(conceptSummary) {
+  return [
+    ["Código", "Concepto", "Cantidad", "Valor total"],
+    ...conceptSummary.map((item) => [
+      item.short,
+      item.label,
+      Number(item.quantity.toFixed(2)),
+      Math.round(item.totalValue),
+    ]),
+  ];
+}
+
+function buildSelectedEmployeeSheet(employee) {
+  return [
+    ["Empleado", employee.employeeName || "Sin nombre"],
+    ["Documento", employee.documentNumber || ""],
+    ["Código interno", employee.internalCode || ""],
+    ["Período", employee.periodDate],
+    ["Salario base", Math.round(employee.baseSalary || 0)],
+    ["Valor hora", Math.round(employee.hourlyRate || 0)],
+    ["Horas extra", Number(employee.overtimeHours.toFixed(2))],
+    ["Recargos", Number(employee.surchargeHours.toFixed(2))],
+    ["Total", Math.round(employee.totalValue)],
+    [],
+    ["Concepto", "Código", "Cantidad", "Multiplicador", "Valor unitario", "Valor total"],
+    ...employee.breakdown.map((line) => [
+      line.label,
+      line.short,
+      Number(line.quantity.toFixed(2)),
+      Number(line.multiplier.toFixed(2)),
+      Math.round(line.unitValue),
+      Math.round(line.totalValue),
+    ]),
+  ];
+}
+
 function App() {
   const [session, setSession] = useState(() =>
     loadStorage(STORAGE_KEYS.session, {
@@ -95,12 +177,10 @@ function App() {
   const [employees, setEmployees] = useState([]);
   const [selectedEmployeeId, setSelectedEmployeeId] = useState("");
   const [search, setSearch] = useState("");
-  const [logs, setLogs] = useState([
-    {
-      type: "info",
-      message: "Base demo cargada. Puedes importar Excel o continuar con la base de ejemplo.",
-    },
-  ]);
+  const [notice, setNotice] = useState({
+    type: "info",
+    message: "Base demo cargada. Puedes importar Excel o trabajar con el ejemplo inicial.",
+  });
   const [isPending, startTransition] = useTransition();
   const deferredSearch = useDeferredValue(search);
 
@@ -131,8 +211,6 @@ function App() {
   const summary = summarizeEmployees(employees);
   const conceptSummary = summarizeByConcept(employees);
   const alerts = buildOperationalAlerts(employees);
-  const legalCatalog = buildConceptCatalog(contextDate);
-  const employeeReport = buildEmployeeReport(selectedEmployee);
 
   const filteredEmployees = employees.filter((employee) => {
     const searchValue = normalizeText(deferredSearch);
@@ -148,8 +226,8 @@ function App() {
     );
   });
 
-  function pushLog(message, type = "info") {
-    setLogs((currentLogs) => [{ message, type }, ...currentLogs].slice(0, 8));
+  function showNotice(message, type = "info") {
+    setNotice({ message, type });
   }
 
   function updateSettings(field, value) {
@@ -175,11 +253,11 @@ function App() {
         email: "",
         password: "",
       });
-      pushLog("Sesion local iniciada en SandeQ.", "success");
+      showNotice(`Sesión iniciada correctamente en ${BRAND_NAME}.`, "success");
       return;
     }
 
-    setLoginError("Credenciales invalidas. Verifica usuario y contrasena.");
+    setLoginError("Credenciales inválidas. Verifica el usuario y la contraseña.");
   }
 
   function handleLocalLogout() {
@@ -199,7 +277,7 @@ function App() {
         setImportError(message);
       }
 
-      pushLog(message, "error");
+      showNotice(message, "error");
     }
   }
 
@@ -215,7 +293,7 @@ function App() {
       const objectRows = getObjectRows(sheetRows);
 
       if (!objectRows.length) {
-        throw new Error("El archivo no tiene filas utiles para procesar.");
+        throw new Error("El archivo no tiene filas útiles para procesar.");
       }
 
       const detectedMapping = detectColumnMap(Object.keys(objectRows[0]));
@@ -227,7 +305,10 @@ function App() {
         setMapping(detectedMapping);
       });
 
-      pushLog(`Base importada desde ${file.name}. Se detectaron ${objectRows.length} filas.`, "success");
+      showNotice(
+        `Base importada desde ${file.name}. Se detectaron ${objectRows.length} filas.`,
+        "success",
+      );
     });
 
     event.target.value = "";
@@ -242,7 +323,7 @@ function App() {
     });
 
     setImportError("");
-    pushLog("Se restauro la base demo con tres personas de referencia.", "info");
+    showNotice("Se restauró la base demo con personas de referencia.", "info");
   }
 
   function handleClearImport() {
@@ -253,22 +334,171 @@ function App() {
     });
 
     setFileName("sin-archivo");
-    pushLog("La base cargada fue limpiada. Puedes importar un nuevo Excel.", "info");
+    setImportError("");
+    showNotice("La base actual fue limpiada. Puedes importar un nuevo Excel.", "info");
   }
 
-  async function handleCopyReport() {
-    if (!employeeReport) {
-      pushLog("No hay una persona seleccionada para copiar el resumen.", "warning");
+  async function handleExportExcel() {
+    if (!employees.length) {
+      showNotice("No hay datos procesados para exportar a Excel.", "warning");
       return;
     }
 
-    if (!navigator.clipboard) {
-      pushLog("Este navegador no permite copiar automaticamente el resumen.", "warning");
+    await runAction("exportar Excel", async () => {
+      const { default: writeXlsxFile } = await import("write-excel-file/browser");
+      const workbookData = [
+        buildSummarySheet(summary, fileName, contextDate),
+        buildEmployeesSheet(employees),
+        buildConceptSheet(conceptSummary),
+      ];
+      const sheetNames = ["Resumen", "Personas", "Conceptos"];
+
+      if (selectedEmployee) {
+        workbookData.push(buildSelectedEmployeeSheet(selectedEmployee));
+        sheetNames.push("Detalle persona");
+      }
+
+      await writeXlsxFile(workbookData, {
+        sheets: sheetNames,
+        fileName: `${buildExportBaseName(fileName)}-kaiko.xlsx`,
+      });
+
+      showNotice("La exportación en Excel fue generada correctamente.", "success");
+    });
+  }
+
+  async function handleExportPdf() {
+    if (!employees.length) {
+      showNotice("No hay datos procesados para exportar a PDF.", "warning");
       return;
     }
 
-    await navigator.clipboard.writeText(JSON.stringify(employeeReport, null, 2));
-    pushLog("Resumen interno copiado al portapapeles.", "success");
+    await runAction("exportar PDF", async () => {
+      const [{ jsPDF }, { default: autoTable }] = await Promise.all([
+        import("jspdf"),
+        import("jspdf-autotable"),
+      ]);
+
+      const doc = new jsPDF({
+        orientation: "landscape",
+        unit: "pt",
+        format: "a4",
+      });
+
+      doc.setFontSize(20);
+      doc.setTextColor(...BRAND_RGB);
+      doc.text(BRAND_NAME, 40, 42);
+
+      doc.setFontSize(11);
+      doc.setTextColor(60, 45, 76);
+      doc.text("Reporte de horas extras y recargos", 40, 64);
+      doc.text(`Archivo base: ${fileName}`, 40, 82);
+      doc.text(`Fecha de referencia: ${contextDate}`, 40, 98);
+
+      autoTable(doc, {
+        startY: 120,
+        head: [["Indicador", "Valor"]],
+        body: [
+          ["Personas liquidadas", formatNumber(summary.totalEmployees, 0)],
+          ["Horas extra acumuladas", formatNumber(summary.totalOvertimeHours)],
+          ["Recargos acumulados", formatNumber(summary.totalSurchargeHours)],
+          ["Valor total estimado", formatCurrency(summary.totalValue)],
+        ],
+        headStyles: {
+          fillColor: BRAND_RGB,
+        },
+        styles: {
+          fontSize: 10,
+        },
+      });
+
+      autoTable(doc, {
+        startY: doc.lastAutoTable.finalY + 18,
+        head: [[
+          "Empleado",
+          "Documento",
+          "Código",
+          "Período",
+          "Horas extra",
+          "Recargos",
+          "Total",
+        ]],
+        body: employees.map((employee) => [
+          employee.employeeName || "Sin nombre",
+          employee.documentNumber || "",
+          employee.internalCode || "",
+          employee.periodDate,
+          formatNumber(employee.overtimeHours),
+          formatNumber(employee.surchargeHours),
+          formatCurrency(employee.totalValue),
+        ]),
+        headStyles: {
+          fillColor: BRAND_RGB,
+        },
+        styles: {
+          fontSize: 9,
+        },
+      });
+
+      autoTable(doc, {
+        startY: doc.lastAutoTable.finalY + 18,
+        head: [["Código", "Concepto", "Cantidad", "Valor"]],
+        body: conceptSummary.map((item) => [
+          item.short,
+          item.label,
+          formatNumber(item.quantity),
+          formatCurrency(item.totalValue),
+        ]),
+        headStyles: {
+          fillColor: BRAND_RGB,
+        },
+        styles: {
+          fontSize: 9,
+        },
+      });
+
+      if (selectedEmployee) {
+        doc.addPage();
+        doc.setFontSize(18);
+        doc.setTextColor(...BRAND_RGB);
+        doc.text(selectedEmployee.employeeName || "Detalle de persona", 40, 42);
+
+        doc.setFontSize(11);
+        doc.setTextColor(60, 45, 76);
+        doc.text(`Documento: ${selectedEmployee.documentNumber || "Sin documento"}`, 40, 64);
+        doc.text(`Código interno: ${selectedEmployee.internalCode || "Sin código"}`, 40, 80);
+        doc.text(`Período: ${selectedEmployee.periodDate}`, 40, 96);
+
+        autoTable(doc, {
+          startY: 120,
+          head: [[
+            "Concepto",
+            "Código",
+            "Cantidad",
+            "Multiplicador",
+            "Valor unitario",
+            "Valor total",
+          ]],
+          body: selectedEmployee.breakdown.map((line) => [
+            line.label,
+            line.short,
+            formatNumber(line.quantity),
+            `${line.mode === "full" ? "x" : "+"}${line.multiplier.toFixed(2)}`,
+            formatCurrency(line.unitValue),
+            formatCurrency(line.totalValue),
+          ]),
+          headStyles: {
+            fillColor: BRAND_RGB,
+          },
+          styles: {
+            fontSize: 9,
+          },
+        });
+      }
+
+      doc.save(`${buildExportBaseName(fileName)}-kaiko.pdf`);
+      showNotice("La exportación en PDF fue generada correctamente.", "success");
+    });
   }
 
   if (!session.isAuthenticated) {
@@ -276,23 +506,27 @@ function App() {
       <div className="auth-shell">
         <section className="auth-card">
           <div className="auth-brand">
-            <img className="brand-mark auth-mark" src="/branding/logoIOS.png" alt="Logo SandeQ" />
+            <img
+              className="brand-mark auth-mark"
+              src="/branding/logoIOS.png"
+              alt={`Logo ${BRAND_NAME}`}
+            />
             <p className="eyebrow">Acceso interno</p>
-            <h1>SandeQ</h1>
+            <h1>{BRAND_NAME}</h1>
             <p className="auth-copy">
-              Ingresa con tus credenciales internas para acceder al modulo de horas
+              Ingresa con tus credenciales internas para acceder al módulo de horas
               extras y recargos.
             </p>
             <div className="hero-tags">
-              <span>Modulo protegido</span>
+              <span>Módulo protegido</span>
               <span>Horas extras Colombia</span>
               <span>Desarrollado por Zivra Studio</span>
             </div>
           </div>
 
           <form className="auth-form" onSubmit={handleLocalLogin}>
-            <label>
-              Usuario
+            <label className="auth-field">
+              <span className="auth-field-label">Usuario</span>
               <input
                 type="email"
                 value={loginForm.email}
@@ -303,12 +537,12 @@ function App() {
                     email: event.target.value,
                   }));
                 }}
-                placeholder="admin@sandeli.com"
+                placeholder="Correo electrónico"
                 autoComplete="username"
               />
             </label>
-            <label>
-              Contrasena
+            <label className="auth-field">
+              <span className="auth-field-label">Contraseña</span>
               <input
                 type="password"
                 value={loginForm.password}
@@ -319,13 +553,13 @@ function App() {
                     password: event.target.value,
                   }));
                 }}
-                placeholder="Ingresa tu contrasena"
+                placeholder="Ingresa tu contraseña"
                 autoComplete="current-password"
               />
             </label>
             {loginError ? <p className="inline-error">{loginError}</p> : null}
             <button className="button primary auth-submit" type="submit">
-              Ingresar a SandeQ
+              Ingresar a {BRAND_NAME}
             </button>
           </form>
         </section>
@@ -338,26 +572,26 @@ function App() {
       <header className="hero-card">
         <div className="hero-copy">
           <div className="brand-row">
-            <img className="brand-mark" src="/branding/logoIOS.png" alt="Logo SandeQ" />
+            <img className="brand-mark" src="/branding/logoIOS.png" alt={`Logo ${BRAND_NAME}`} />
             <div>
-              <p className="eyebrow">Motor de horas extras para Colombia</p>
-              <h1>SandeQ</h1>
+              <p className="eyebrow">Software de horas extras para Colombia</p>
+              <h1>{BRAND_NAME}</h1>
             </div>
           </div>
 
           <p className="hero-text">
-            Software contable enfocado en horas extras y recargos, con importacion
-            de Excel, tablero operativo, reglas laborales colombianas y control
-            interno para revision y cierre.
+            Plataforma contable enfocada en horas extras y recargos, con importación
+            de Excel, cálculo operativo, consolidado por persona y salida directa a
+            PDF o Excel.
           </p>
 
           <div className="hero-tags">
-            <span>Excel-first</span>
+            <span>Base en Excel</span>
             <span>Control interno</span>
-            <span>Colombia 2025-2027</span>
+            <span>Exportación directa</span>
             <span>Desarrollado por Zivra Studio</span>
             <button className="button ghost button-inline" onClick={handleLocalLogout}>
-              Cerrar sesion
+              Cerrar sesión
             </button>
           </div>
         </div>
@@ -371,7 +605,7 @@ function App() {
           <div className="stat-card">
             <span className="stat-label">Horas extra</span>
             <strong>{formatNumber(summary.totalOvertimeHours)}</strong>
-            <small>Solo conceptos de hora extra</small>
+            <small>Conceptos extraordinarios liquidados</small>
           </div>
           <div className="stat-card">
             <span className="stat-label">Recargos</span>
@@ -381,10 +615,16 @@ function App() {
           <div className="stat-card">
             <span className="stat-label">Valor estimado</span>
             <strong>{formatCurrency(summary.totalValue)}</strong>
-            <small>Calculo local para preliquidacion</small>
+            <small>Proyección local del período</small>
           </div>
         </div>
       </header>
+
+      {notice ? (
+        <section className={`status-banner ${notice.type}`}>
+          <strong>{notice.message}</strong>
+        </section>
+      ) : null}
 
       <main className="dashboard-grid">
         <section className="panel panel-import">
@@ -430,19 +670,19 @@ function App() {
                 </div>
                 <div>
                   <dt>Procesando</dt>
-                  <dd>{isPending ? "Si" : "No"}</dd>
+                  <dd>{isPending ? "Sí" : "No"}</dd>
                 </div>
               </dl>
               {importError ? <p className="inline-error">{importError}</p> : null}
               <p className="muted">
-                Recomendacion: incluye al menos nombre, documento y las columnas de
-                cantidades como HED, HEN, RN, DF, HEDF o HENDF. Si tu base esta en
-                formato .xls, exportala primero a .xlsx.
+                Recomendación: incluye al menos nombre, documento y columnas como
+                HED, HEN, RN, DF, HEDF o HENDF. Si tu base está en formato `.xls`,
+                expórtala primero a `.xlsx`.
               </p>
             </article>
 
             <article className="surface-card">
-              <h3>Parametros base</h3>
+              <h3>Parámetros base</h3>
               <div className="form-grid compact">
                 <label>
                   Fecha por defecto
@@ -453,7 +693,7 @@ function App() {
                   />
                 </label>
                 <label>
-                  Dias laborales por semana
+                  Días laborales por semana
                   <input
                     type="number"
                     min="1"
@@ -465,12 +705,16 @@ function App() {
                   />
                 </label>
                 <label>
-                  Horas maximas semanales
+                  Horas máximas semanales
                   <input type="text" value={`${getWeeklyHours(contextDate)} h`} readOnly />
                 </label>
                 <label>
-                  Inicio jornada nocturna
-                  <input type="text" value={`${getNightShiftStartHour(contextDate)}:00`} readOnly />
+                  Inicio de jornada nocturna
+                  <input
+                    type="text"
+                    value={`${getNightShiftStartHour(contextDate)}:00`}
+                    readOnly
+                  />
                 </label>
               </div>
             </article>
@@ -525,56 +769,16 @@ function App() {
           </div>
         </section>
 
-        <section className="panel panel-rules">
-          <div className="panel-heading">
-            <div>
-              <p className="eyebrow">2. Regla laboral</p>
-              <h2>Motor Colombia sensible a fechas</h2>
-            </div>
-            <div className="rate-pill">
-              Dominical/festivo actual: {(getSundayRate(contextDate) * 100).toFixed(0)}%
-            </div>
-          </div>
-
-          <div className="timeline-grid">
-            {LEGAL_TIMELINE.map((item) => (
-              <article key={item.date} className="timeline-card">
-                <span>{item.date}</span>
-                <strong>{item.title}</strong>
-                <p>{item.detail}</p>
-              </article>
-            ))}
-          </div>
-
-          <div className="rules-table">
-            {legalCatalog.map((rule) => (
-              <article key={rule.key} className="rule-card">
-                <div>
-                  <span className="rule-code">{rule.short}</span>
-                  <strong>{rule.label}</strong>
-                </div>
-                <div className="rule-meta">
-                  <span>
-                    {rule.mode === "full" ? "x" : "+"}
-                    {rule.multiplier.toFixed(2)}
-                  </span>
-                  <p>{rule.detail}</p>
-                </div>
-              </article>
-            ))}
-          </div>
-        </section>
-
         <section className="panel panel-list">
           <div className="panel-heading">
             <div>
-              <p className="eyebrow">3. Operacion</p>
-              <h2>Personas liquidadas</h2>
+              <p className="eyebrow">2. Personas</p>
+              <h2>Listado procesado</h2>
             </div>
             <input
               className="search-input"
               type="search"
-              placeholder="Buscar por nombre, documento o codigo"
+              placeholder="Buscar por nombre, documento o código"
               value={search}
               onChange={(event) => setSearch(event.target.value)}
             />
@@ -590,7 +794,7 @@ function App() {
                 <div>
                   <strong>{employee.employeeName || "Sin nombre"}</strong>
                   <span>{employee.documentNumber || "Sin documento"}</span>
-                  <small>{employee.internalCode || "Sin codigo interno"}</small>
+                  <small>{employee.internalCode || "Sin código interno"}</small>
                 </div>
                 <div className="employee-item-meta">
                   <span>{formatCurrency(employee.totalValue)}</span>
@@ -604,7 +808,7 @@ function App() {
         <section className="panel panel-detail">
           <div className="panel-heading">
             <div>
-              <p className="eyebrow">4. Detalle</p>
+              <p className="eyebrow">3. Detalle</p>
               <h2>{selectedEmployee ? selectedEmployee.employeeName : "Selecciona una persona"}</h2>
             </div>
             {selectedEmployee ? (
@@ -620,7 +824,7 @@ function App() {
             <>
               <div className="detail-hero">
                 <article className="surface-card">
-                  <h3>Base de calculo</h3>
+                  <h3>Base de cálculo</h3>
                   <dl className="definition-grid">
                     <div>
                       <dt>Salario base</dt>
@@ -635,7 +839,7 @@ function App() {
                       <dd>{formatNumber(selectedEmployee.monthlyHours)}</dd>
                     </div>
                     <div>
-                      <dt>Codigo interno</dt>
+                      <dt>Código interno</dt>
                       <dd>{selectedEmployee.internalCode || "Pendiente"}</dd>
                     </div>
                   </dl>
@@ -653,7 +857,7 @@ function App() {
                       <dd>{formatNumber(selectedEmployee.surchargeHours)}</dd>
                     </div>
                     <div>
-                      <dt>Dominical/festivo</dt>
+                      <dt>Dominical o festivo</dt>
                       <dd>{(selectedEmployee.sundayRate * 100).toFixed(0)}%</dd>
                     </div>
                     <div>
@@ -697,7 +901,7 @@ function App() {
             </>
           ) : (
             <div className="empty-state">
-              <p>No hay personas para mostrar todavia.</p>
+              <p>No hay personas para mostrar todavía.</p>
             </div>
           )}
         </section>
@@ -705,14 +909,14 @@ function App() {
         <section className="panel panel-ops">
           <div className="panel-heading">
             <div>
-              <p className="eyebrow">5. Control interno</p>
-              <h2>Alertas y consolidado operativo</h2>
+              <p className="eyebrow">4. Control</p>
+              <h2>Alertas y consolidado</h2>
             </div>
           </div>
 
           <div className="ops-grid">
             <article className="surface-card">
-              <h3>Alertas automaticas</h3>
+              <h3>Alertas automáticas</h3>
               <ul className="log-list">
                 {alerts.map((alert, index) => (
                   <li key={`alert-${index}`} className={`log-item ${alert.type}`}>
@@ -729,7 +933,7 @@ function App() {
                 <table>
                   <thead>
                     <tr>
-                      <th>Codigo</th>
+                      <th>Código</th>
                       <th>Concepto</th>
                       <th>Cantidad</th>
                       <th>Valor</th>
@@ -754,12 +958,15 @@ function App() {
         <section className="panel panel-export">
           <div className="panel-heading">
             <div>
-              <p className="eyebrow">6. Salida</p>
-              <h2>Resumen interno exportable</h2>
+              <p className="eyebrow">5. Exportación</p>
+              <h2>Salida de datos en PDF o Excel</h2>
             </div>
             <div className="panel-actions">
-              <button className="button ghost" onClick={handleCopyReport}>
-                Copiar JSON
+              <button className="button ghost" onClick={handleExportPdf}>
+                Exportar PDF
+              </button>
+              <button className="button primary" onClick={handleExportExcel}>
+                Exportar Excel
               </button>
             </div>
           </div>
@@ -771,64 +978,20 @@ function App() {
                 <li>Personas liquidadas: {formatNumber(summary.totalEmployees, 0)}</li>
                 <li>Horas extra acumuladas: {formatNumber(summary.totalOvertimeHours)}</li>
                 <li>Recargos acumulados: {formatNumber(summary.totalSurchargeHours)}</li>
-                <li>Valor total del periodo: {formatCurrency(summary.totalValue)}</li>
+                <li>Valor total del período: {formatCurrency(summary.totalValue)}</li>
               </ul>
             </article>
 
             <article className="surface-card">
-              <h3>JSON de auditoria</h3>
-              <pre className="payload-box">
-                {JSON.stringify(
-                  employeeReport || {
-                    mensaje: "Selecciona una persona para generar el resumen interno.",
-                  },
-                  null,
-                  2,
-                )}
-              </pre>
+              <h3>Contenido de la exportación</h3>
+              <ul className="mini-list">
+                <li>Resumen general del período y archivo base cargado.</li>
+                <li>Listado de personas procesadas con sus totales.</li>
+                <li>Consolidado por concepto de hora extra y recargo.</li>
+                <li>Detalle individual de la persona seleccionada, si aplica.</li>
+              </ul>
             </article>
           </div>
-        </section>
-
-        <section className="panel panel-sources">
-          <div className="panel-heading">
-            <div>
-              <p className="eyebrow">Base documental</p>
-              <h2>Fuentes usadas para el diseno</h2>
-            </div>
-          </div>
-
-          <div className="sources-grid">
-            {SOURCE_LINKS.map((source) => (
-              <a
-                key={source.href}
-                className="source-card"
-                href={source.href}
-                target="_blank"
-                rel="noreferrer"
-              >
-                <strong>{source.label}</strong>
-                <p>{source.note}</p>
-              </a>
-            ))}
-          </div>
-        </section>
-
-        <section className="panel panel-notes">
-          <div className="panel-heading">
-            <div>
-              <p className="eyebrow">7. Bitacora</p>
-              <h2>Actividad reciente</h2>
-            </div>
-          </div>
-
-          <ul className="log-list">
-            {logs.map((log, index) => (
-              <li key={`log-${index}`} className={`log-item ${log.type}`}>
-                {log.message}
-              </li>
-            ))}
-          </ul>
         </section>
       </main>
     </div>

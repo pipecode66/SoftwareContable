@@ -2,9 +2,9 @@ const CURRENT_PERIOD = "2026-03-18";
 
 export const SOURCE_LINKS = [
   {
-    label: "Actualicese - Reforma laboral",
+    label: "Actualícese - Reforma laboral",
     href: "https://actualicese.com/reforma-laboral-ley-2466-de-2025-consulte-la-vigencia-de-cada-cambio/",
-    note: "Resumen practico de vigencias para jornada nocturna, dominicales y reduccion de jornada.",
+    note: "Resumen práctico de vigencias para jornada nocturna, dominicales y reducción de jornada.",
   },
   {
     label: "Gerencie - Recargos y horas extras",
@@ -18,13 +18,13 @@ export const LEGAL_TIMELINE = [
     date: "2025-07-01",
     title: "Dominical y festivo al 80%",
     detail:
-      "Desde esta fecha la liquidacion dominical y festiva debe contemplar el 80% de recargo.",
+      "Desde esta fecha la liquidación dominical y festiva debe contemplar el 80% de recargo.",
   },
   {
     date: "2025-12-25",
     title: "Jornada nocturna desde las 7:00 p.m.",
     detail:
-      "La operacion nocturna se calcula desde las 7:00 p.m. en adelante para periodos posteriores a esta fecha.",
+      "La operación nocturna se calcula desde las 7:00 p.m. en adelante para períodos posteriores a esta fecha.",
   },
   {
     date: "2026-07-01",
@@ -34,7 +34,7 @@ export const LEGAL_TIMELINE = [
   },
   {
     date: "2026-07-15",
-    title: "Jornada maxima semanal de 42 horas",
+    title: "Jornada máxima semanal de 42 horas",
     detail:
       "El valor hora de referencia cambia si la empresa liquida con base en salario mensual.",
   },
@@ -42,17 +42,17 @@ export const LEGAL_TIMELINE = [
     date: "2027-07-01",
     title: "Dominical y festivo al 100%",
     detail:
-      "Se contempla la ultima escala progresiva para el recargo dominical y festivo.",
+      "Se contempla la última escala progresiva para el recargo dominical y festivo.",
   },
 ];
 
 export const FIELD_DEFINITIONS = [
   { key: "employeeName", label: "Nombre de la persona", required: true },
   { key: "documentNumber", label: "Documento", required: true },
-  { key: "internalCode", label: "Codigo interno", required: false },
+  { key: "internalCode", label: "Código interno", required: false },
   { key: "baseSalary", label: "Salario base mensual", required: false },
   { key: "hourlyRate", label: "Valor hora directo", required: false },
-  { key: "periodDate", label: "Fecha del periodo", required: false },
+  { key: "periodDate", label: "Fecha del período", required: false },
   { key: "extraDay", label: "Hora extra diurna", required: false },
   { key: "extraNight", label: "Hora extra nocturna", required: false },
   { key: "nightSurcharge", label: "Recargo nocturno", required: false },
@@ -174,7 +174,7 @@ export const SAMPLE_ROWS = [
   {
     Empleado: "Lina Mercado",
     Documento: "1032456712",
-    CodigoInterno: "SDQ-001",
+    "Código Interno": "SDQ-001",
     Salario: 3200000,
     Fecha: "2026-03-15",
     HED: 6,
@@ -187,7 +187,7 @@ export const SAMPLE_ROWS = [
   {
     Empleado: "Carlos Rojas",
     Documento: "79981122",
-    CodigoInterno: "SDQ-002",
+    "Código Interno": "SDQ-002",
     Salario: 2400000,
     Fecha: "2026-03-15",
     HED: 4,
@@ -200,7 +200,7 @@ export const SAMPLE_ROWS = [
   {
     Empleado: "Yuliana Torres",
     Documento: "52890144",
-    CodigoInterno: "SDQ-003",
+    "Código Interno": "SDQ-003",
     Salario: 4100000,
     Fecha: "2026-08-15",
     HED: 3,
@@ -364,7 +364,7 @@ export function buildConceptCatalog(dateValue) {
       family: "extra_hours",
       mode: "full",
       multiplier: 1.25,
-      detail: "Se liquida como hora ordinaria mas 25%.",
+      detail: "Se liquida como hora ordinaria más 25%.",
     },
     {
       key: "extraNight",
@@ -373,7 +373,7 @@ export function buildConceptCatalog(dateValue) {
       family: "extra_hours",
       mode: "full",
       multiplier: 1.75,
-      detail: "Se liquida como hora ordinaria mas 75%.",
+      detail: "Se liquida como hora ordinaria más 75%.",
     },
     {
       key: "nightSurcharge",
@@ -409,7 +409,7 @@ export function buildConceptCatalog(dateValue) {
       family: "extra_hours",
       mode: "full",
       multiplier: 1.25 + sundayRate,
-      detail: "Hora extra diurna mas recargo dominical o festivo vigente.",
+      detail: "Hora extra diurna más recargo dominical o festivo vigente.",
     },
     {
       key: "extraSundayNight",
@@ -418,7 +418,7 @@ export function buildConceptCatalog(dateValue) {
       family: "extra_hours",
       mode: "full",
       multiplier: 1.75 + sundayRate,
-      detail: "Hora extra nocturna mas recargo dominical o festivo vigente.",
+      detail: "Hora extra nocturna más recargo dominical o festivo vigente.",
     },
   ];
 }
@@ -613,8 +613,8 @@ export function buildOperationalAlerts(employees) {
   if (employeesWithoutId.length) {
     alerts.push({
       type: "info",
-      title: "Codigos internos pendientes",
-      detail: `${employeesWithoutId.length} personas no tienen codigo interno asociado en la base.`,
+      title: "Códigos internos pendientes",
+      detail: `${employeesWithoutId.length} personas no tienen código interno asociado en la base.`,
     });
   }
 
@@ -622,8 +622,8 @@ export function buildOperationalAlerts(employees) {
   if (dominantSunday.length) {
     alerts.push({
       type: "info",
-      title: "Periodo con dominical al 90% o mas",
-      detail: `${dominantSunday.length} personas estan siendo liquidadas bajo una vigencia dominical alta.`,
+      title: "Período con dominical al 90% o más",
+      detail: `${dominantSunday.length} personas están siendo liquidadas bajo una vigencia dominical alta.`,
     });
   }
 
@@ -640,7 +640,7 @@ export function buildOperationalAlerts(employees) {
     alerts.push({
       type: "success",
       title: "Base consistente",
-      detail: "No se detectaron alertas prioritarias en la revision automatica.",
+      detail: "No se detectaron alertas prioritarias en la revisión automática.",
     });
   }
 
