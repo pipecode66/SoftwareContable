@@ -30,6 +30,24 @@ npm run build
 npm run lint
 ```
 
+## Despliegue en Vercel
+
+Este repositorio ya queda listo para desplegarse sin `vercel.json`.
+
+- Framework: Vite
+- Install Command: `npm install`
+- Build Command: `npm run build`
+- Output Directory: `dist`
+- Node recomendado: `20+`
+
+Archivos clave para el despliegue:
+
+- `package.json`
+- `package-lock.json`
+- `.nvmrc`
+
+Si conectas el repositorio desde Vercel, deberia detectar la configuracion automaticamente.
+
 ## Estructura principal
 
 - `src/App.jsx`: interfaz principal y flujo de login
