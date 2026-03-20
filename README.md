@@ -175,10 +175,13 @@ No requiere `vercel.json`.
 - Framework: `Next.js`
 - Install Command: `npm install`
 - Build Command: `npm run build`
+- Output Directory: dejar vacío en Vercel
 - Environment Variables:
   - `NEXT_PUBLIC_SUPABASE_URL`
   - `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`
   - `SUPABASE_SERVICE_ROLE_KEY`
+
+Si el proyecto venía configurado antes como `Vite`, elimina `dist` del campo `Output Directory` en Vercel para que use la salida nativa de Next.js.
 
 ## Notas de mantenimiento
 
