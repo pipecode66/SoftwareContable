@@ -1,567 +1,1110 @@
-import { useDeferredValue, useEffect, useState, useTransition } from "react";
+import { useEffect, useState } from "react";
 import readXlsxFile from "read-excel-file/browser";
 import "./App.css";
-import WorkforceModule from "./modules/workforce/WorkforceModule";
 import {
-  DEFAULT_SETTINGS,
-  FIELD_DEFINITIONS,
-  SAMPLE_ROWS,
-  buildEmployees,
-  buildOperationalAlerts,
-  detectColumnMap,
-  formatCurrency,
-  formatNumber,
-  getNightShiftStartHour,
-  getWeeklyHours,
-  normalizeText,
-  summarizeByConcept,
-  summarizeEmployees,
-} from "./lib/overtime";
+  CURRENT_TIME,
+  DAY_LABELS,
+  LOGIN_ACCOUNTS,
+  NAV_ITEMS,
+  SHIFT_LIBRARY,
+  TODAY,
+  createEmployeeDraft,
+  deleteEmployee,
+  getAccountByCredentials,
+  getAttendanceState,
+  getCurrentOperationsStats,
+  getExcelRows,
+  getPayrollDashboard,
+  getPayrollFiltersOptions,
+  getScheduleWeekView,
+  loadAccountData,
+  saveAccountData,
+  setUploadedExcelRows,
+  upsertAttendance,
+  upsertEmployee,
+} from "./lib/dashboardData";
 
 const STORAGE_KEYS = {
-  session: "kaiko.session",
-  settings: "kaiko.settings",
+  session: "kaiko.dashboard.session",
 };
 
 const BRAND_NAME = "KAIKO";
-const BRAND_RGB = [159, 31, 239];
 
-const APP_CREDENTIALS = {
-  email: "admin@sandeli.com",
-  password: "sandeli12@",
-};
+function formatCurrency(value) {
+  return new Intl.NumberFormat("es-CO", {
+    style: "currency",
+    currency: "COP",
+    maximumFractionDigits: 0,
+  }).format(Number(value || 0));
+}
 
-function loadStorage(key, fallback) {
+function formatNumber(value, digits = 1) {
+  return new Intl.NumberFormat("es-CO", {
+    maximumFractionDigits: digits,
+    minimumFractionDigits: digits,
+  }).format(Number(value || 0));
+}
+
+function loadSession() {
   if (typeof window === "undefined") {
-    return fallback;
+    return {
+      isAuthenticated: false,
+      email: "",
+    };
   }
 
   try {
-    const raw = window.localStorage.getItem(key);
-    return raw ? { ...fallback, ...JSON.parse(raw) } : fallback;
+    const raw = window.localStorage.getItem(STORAGE_KEYS.session);
+    return raw
+      ? JSON.parse(raw)
+      : {
+          isAuthenticated: false,
+          email: "",
+        };
   } catch {
-    return fallback;
+    return {
+      isAuthenticated: false,
+      email: "",
+    };
   }
 }
 
-function saveStorage(key, value) {
+function saveSession(session) {
   if (typeof window === "undefined") {
     return;
   }
 
-  window.localStorage.setItem(key, JSON.stringify(value));
+  window.localStorage.setItem(STORAGE_KEYS.session, JSON.stringify(session));
 }
 
-function getObjectRows(sheetRows) {
+function getRowsFromSheet(sheetRows) {
   const [rawHeaders = [], ...bodyRows] = sheetRows;
-  const usedHeaders = new Map();
-
-  const headers = rawHeaders.map((header, index) => {
-    const baseHeader = String(header || `columna_${index + 1}`).trim() || `columna_${index + 1}`;
-    const count = usedHeaders.get(baseHeader) || 0;
-    usedHeaders.set(baseHeader, count + 1);
-    return count === 0 ? baseHeader : `${baseHeader}_${count + 1}`;
-  });
 
   return bodyRows
     .filter((row) => row.some((cell) => String(cell ?? "").trim() !== ""))
     .map((row) =>
-      Object.fromEntries(headers.map((header, index) => [header, row[index] ?? ""])),
+      Object.fromEntries(
+        rawHeaders.map((header, index) => [String(header || `col_${index + 1}`), row[index] ?? ""]),
+      ),
     );
 }
 
-function buildExportBaseName(fileName) {
-  const rawName = String(fileName || "kaiko-horas-extras")
-    .replace(/\.[^.]+$/, "")
-    .trim();
-
-  return normalizeText(rawName) || "kaiko-horas-extras";
+function MetricCard({ label, value, detail, tone = "violet" }) {
+  return (
+    <article className={`metric-card ${tone}`}>
+      <span className="metric-label">{label}</span>
+      <strong>{value}</strong>
+      <small>{detail}</small>
+    </article>
+  );
 }
 
-function buildSummarySheet(summary, fileName, contextDate) {
-  return [
-    [BRAND_NAME, "Resumen general"],
-    [],
-    ["Archivo base", fileName],
-    ["Fecha de referencia", contextDate],
-    ["Personas liquidadas", summary.totalEmployees],
-    ["Horas extra acumuladas", Number(summary.totalOvertimeHours.toFixed(2))],
-    ["Recargos acumulados", Number(summary.totalSurchargeHours.toFixed(2))],
-    ["Valor total estimado", Math.round(summary.totalValue)],
-  ];
+function StatusBadge({ status, label }) {
+  return <span className={`status-badge ${status}`}>{label}</span>;
 }
 
-function buildEmployeesSheet(employees) {
-  return [
-    [
-      "Empleado",
-      "Documento",
-      "Código interno",
-      "Período",
-      "Salario base",
-      "Valor hora",
-      "Horas extra",
-      "Recargos",
-      "Total",
-    ],
-    ...employees.map((employee) => [
-      employee.employeeName || "Sin nombre",
-      employee.documentNumber || "",
-      employee.internalCode || "",
-      employee.periodDate,
-      Math.round(employee.baseSalary || 0),
-      Math.round(employee.hourlyRate || 0),
-      Number(employee.overtimeHours.toFixed(2)),
-      Number(employee.surchargeHours.toFixed(2)),
-      Math.round(employee.totalValue),
-    ]),
-  ];
+function ChartCard({ title, subtitle, data, formatter, tone = "violet" }) {
+  const max = Math.max(...data.map((item) => Number(item.value || 0)), 1);
+
+  return (
+    <article className="chart-card">
+      <div className="card-heading">
+        <div>
+          <h3>{title}</h3>
+          <p>{subtitle}</p>
+        </div>
+      </div>
+
+      <div className="chart-bars">
+        {data.length ? (
+          data.slice(0, 8).map((item) => (
+            <div className="chart-row" key={item.id}>
+              <span>{item.label}</span>
+              <div className="chart-track">
+                <div
+                  className={`chart-fill ${tone}`}
+                  style={{ width: `${Math.max(6, (Number(item.value || 0) / max) * 100)}%` }}
+                />
+              </div>
+              <strong>{formatter(item.value)}</strong>
+            </div>
+          ))
+        ) : (
+          <div className="empty-card">
+            <p>No hay datos disponibles.</p>
+          </div>
+        )}
+      </div>
+    </article>
+  );
 }
 
-function buildConceptSheet(conceptSummary) {
-  return [
-    ["Código", "Concepto", "Cantidad", "Valor total"],
-    ...conceptSummary.map((item) => [
-      item.short,
-      item.label,
-      Number(item.quantity.toFixed(2)),
-      Math.round(item.totalValue),
-    ]),
-  ];
+function ScheduleCell({ employee, day, data, onSelect }) {
+  const state = getAttendanceState(employee, day.date, data);
+  const shiftLabel =
+    state.shiftBlocks.length > 0
+      ? state.shiftBlocks.map((block) => `${block.start} - ${block.end}`).join(" · ")
+      : "Descanso";
+
+  return (
+    <button className={`schedule-cell ${state.status}`} onClick={onSelect}>
+      <span className="schedule-hours">{shiftLabel}</span>
+      <StatusBadge status={state.status} label={state.label} />
+    </button>
+  );
 }
 
-function buildSelectedEmployeeSheet(employee) {
-  return [
-    ["Empleado", employee.employeeName || "Sin nombre"],
-    ["Documento", employee.documentNumber || ""],
-    ["Código interno", employee.internalCode || ""],
-    ["Período", employee.periodDate],
-    ["Salario base", Math.round(employee.baseSalary || 0)],
-    ["Valor hora", Math.round(employee.hourlyRate || 0)],
-    ["Horas extra", Number(employee.overtimeHours.toFixed(2))],
-    ["Recargos", Number(employee.surchargeHours.toFixed(2))],
-    ["Total", Math.round(employee.totalValue)],
-    [],
-    ["Concepto", "Código", "Cantidad", "Multiplicador", "Valor unitario", "Valor total"],
-    ...employee.breakdown.map((line) => [
-      line.label,
-      line.short,
-      Number(line.quantity.toFixed(2)),
-      Number(line.multiplier.toFixed(2)),
-      Math.round(line.unitValue),
-      Math.round(line.totalValue),
-    ]),
-  ];
+function createEmptyDataForSession(nextSession) {
+  return nextSession?.isAuthenticated && nextSession.email
+    ? loadAccountData(nextSession.email)
+    : {
+        employees: [],
+        attendance: [],
+        payrollRecords: [],
+        excelRows: [],
+        uploadedExcelRows: [],
+      };
+}
+
+function DashboardView({ payrollView, operations, onChangeView }) {
+  return (
+    <section className="module-shell">
+      <div className="section-grid">
+        <MetricCard
+          label="Gasto total en horas extras"
+          value={formatCurrency(payrollView.summary.overtimeSpend)}
+          detail="Corte según filtros actuales"
+        />
+        <MetricCard
+          label="Horas extras totales"
+          value={formatNumber(payrollView.summary.overtimeHours)}
+          detail="Acumulado consolidado"
+          tone="magenta"
+        />
+        <MetricCard
+          label="Horas perdidas"
+          value={formatNumber(payrollView.summary.lostHours)}
+          detail="Faltas y atrasos"
+          tone="lilac"
+        />
+        <MetricCard
+          label="Empleados trabajando"
+          value={formatNumber(operations.workingNow, 0)}
+          detail="Estado operativo actual"
+          tone="slate"
+        />
+      </div>
+
+      <div className="content-grid">
+        <ChartCard
+          title="Horas extras por mes"
+          subtitle="Vista ejecutiva del comportamiento mensual"
+          data={payrollView.charts.overtimeByMonth}
+          formatter={(value) => formatNumber(value)}
+          tone="violet"
+        />
+        <ChartCard
+          title="Resultado final por mes"
+          subtitle="Salarios, recargo nocturno y horas extras"
+          data={payrollView.charts.finalByMonth}
+          formatter={(value) => formatCurrency(value)}
+          tone="magenta"
+        />
+      </div>
+
+      <div className="content-grid narrow">
+        <article className="panel-card">
+          <div className="card-heading">
+            <div>
+              <h3>Estado operativo</h3>
+              <p>Lectura inmediata del día.</p>
+            </div>
+            <button className="soft-button" onClick={() => onChangeView("schedule")}>
+              Ir a horario
+            </button>
+          </div>
+          <ul className="stat-list">
+            <li>
+              <span>Faltas justificadas</span>
+              <strong>{formatNumber(operations.justifiedAbsences, 0)}</strong>
+            </li>
+            <li>
+              <span>Faltas no justificadas</span>
+              <strong>{formatNumber(operations.unjustifiedAbsences, 0)}</strong>
+            </li>
+            <li>
+              <span>Atrasos en horas</span>
+              <strong>{formatNumber(operations.lateHours)}</strong>
+            </li>
+          </ul>
+        </article>
+
+        <ChartCard
+          title="Empleados por cargo"
+          subtitle="Composición actual de la operación"
+          data={payrollView.charts.employeesByPosition}
+          formatter={(value) => formatNumber(value, 0)}
+          tone="slate"
+        />
+      </div>
+    </section>
+  );
+}
+
+function EmployeesView({
+  employees,
+  selectedEmployee,
+  employeeForm,
+  setEmployeeForm,
+  onSelectEmployee,
+  onSaveEmployee,
+  onDeleteEmployee,
+  onResetEmployee,
+}) {
+  return (
+    <section className="module-shell">
+      <div className="content-grid">
+        <article className="panel-card">
+          <div className="card-heading">
+            <div>
+              <h3>Equipo registrado</h3>
+              <p>Admisión, cargo, salario y valor por hora.</p>
+            </div>
+            <button className="soft-button" onClick={onResetEmployee}>
+              Nuevo empleado
+            </button>
+          </div>
+
+          <div className="employee-stack">
+            {employees.length ? (
+              employees.map((employee) => (
+                <button
+                  key={employee.id}
+                  className={`employee-row ${selectedEmployee?.id === employee.id ? "active" : ""}`}
+                  onClick={() => onSelectEmployee(employee)}
+                >
+                  <div>
+                    <strong>{employee.name}</strong>
+                    <span>{employee.position}</span>
+                  </div>
+                  <div>
+                    <strong>{formatCurrency(employee.salaryBase)}</strong>
+                    <span>{formatNumber(employee.hourlyValue, 0)} / h</span>
+                  </div>
+                </button>
+              ))
+            ) : (
+              <div className="empty-card">
+                <p>Esta cuenta no tiene empleados cargados todavía.</p>
+              </div>
+            )}
+          </div>
+        </article>
+
+        <article className="panel-card">
+          <div className="card-heading">
+            <div>
+              <h3>{employeeForm.id ? "Editar empleado" : "Crear empleado"}</h3>
+              <p>Completa la ficha básica del trabajador.</p>
+            </div>
+          </div>
+
+          <form className="form-layout" onSubmit={onSaveEmployee}>
+            <div className="form-grid">
+              <label>
+                Fecha de admisión
+                <input
+                  type="date"
+                  value={employeeForm.admissionDate}
+                  onChange={(event) =>
+                    setEmployeeForm((current) => ({
+                      ...current,
+                      admissionDate: event.target.value,
+                    }))
+                  }
+                />
+              </label>
+              <label>
+                Nombre
+                <input
+                  value={employeeForm.name}
+                  onChange={(event) =>
+                    setEmployeeForm((current) => ({ ...current, name: event.target.value }))
+                  }
+                />
+              </label>
+              <label>
+                Cargo
+                <input
+                  value={employeeForm.position}
+                  onChange={(event) =>
+                    setEmployeeForm((current) => ({ ...current, position: event.target.value }))
+                  }
+                />
+              </label>
+              <label>
+                Salario base
+                <input
+                  type="number"
+                  min="0"
+                  value={employeeForm.salaryBase}
+                  onChange={(event) =>
+                    setEmployeeForm((current) => ({
+                      ...current,
+                      salaryBase: Number(event.target.value) || 0,
+                    }))
+                  }
+                />
+              </label>
+              <label>
+                Carga horaria semanal
+                <input
+                  type="number"
+                  min="1"
+                  value={employeeForm.weeklyHours}
+                  onChange={(event) =>
+                    setEmployeeForm((current) => ({
+                      ...current,
+                      weeklyHours: Number(event.target.value) || 0,
+                    }))
+                  }
+                />
+              </label>
+              <label>
+                Valor por hora
+                <input
+                  type="number"
+                  min="0"
+                  value={employeeForm.hourlyValue}
+                  onChange={(event) =>
+                    setEmployeeForm((current) => ({
+                      ...current,
+                      hourlyValue: Number(event.target.value) || 0,
+                    }))
+                  }
+                />
+              </label>
+              <label>
+                Día de descanso
+                <select
+                  value={employeeForm.restDay}
+                  onChange={(event) =>
+                    setEmployeeForm((current) => ({ ...current, restDay: event.target.value }))
+                  }
+                >
+                  {Object.entries(DAY_LABELS).map(([key, label]) => (
+                    <option key={key} value={key}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Tipo de turno
+                <select
+                  value={employeeForm.shiftId}
+                  onChange={(event) =>
+                    setEmployeeForm((current) => ({ ...current, shiftId: event.target.value }))
+                  }
+                >
+                  {Object.entries(SHIFT_LIBRARY).map(([key, shift]) => (
+                    <option key={key} value={key}>
+                      {shift.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Estado
+                <select
+                  value={employeeForm.status}
+                  onChange={(event) =>
+                    setEmployeeForm((current) => ({ ...current, status: event.target.value }))
+                  }
+                >
+                  <option value="Activo">Activo</option>
+                  <option value="Inactivo">Inactivo</option>
+                  <option value="Vacante">Vacante</option>
+                </select>
+              </label>
+            </div>
+
+            <div className="button-group">
+              <button className="primary-button" type="submit">
+                Guardar empleado
+              </button>
+              <button className="soft-button" type="button" onClick={onResetEmployee}>
+                Limpiar
+              </button>
+              <button className="soft-button danger" type="button" onClick={onDeleteEmployee}>
+                Eliminar
+              </button>
+            </div>
+          </form>
+        </article>
+      </div>
+    </section>
+  );
+}
+
+function ScheduleView({
+  data,
+  employees,
+  scheduleView,
+  attendanceForm,
+  setAttendanceForm,
+  onSelectControl,
+  onSaveAttendance,
+  onQuickClockIn,
+}) {
+  return (
+    <section className="module-shell">
+      <div className="content-grid schedule">
+        <article className="panel-card span-two">
+          <div className="card-heading">
+            <div>
+              <h3>Horario empresarial semanal</h3>
+              <p>Vista operativa del equipo con control de faltas y atrasos.</p>
+            </div>
+          </div>
+
+          <div className="schedule-grid">
+            <div className="schedule-grid-header sticky-left">Empleado</div>
+            {scheduleView.days.map((day) => (
+              <div key={day.date} className="schedule-grid-header">
+                {DAY_LABELS[day.key]}<small>{day.date.slice(8, 10)}</small>
+              </div>
+            ))}
+
+            {scheduleView.rows.map((row) => (
+              <div className="schedule-grid-row" key={row.employee.id}>
+                <div className="schedule-employee sticky-left">
+                  <strong>{row.employee.name}</strong>
+                  <span>{row.employee.position}</span>
+                </div>
+                {row.days.map((day) => (
+                  <ScheduleCell
+                    key={`${row.employee.id}-${day.date}`}
+                    employee={row.employee}
+                    day={day}
+                    data={data}
+                    onSelect={() => onSelectControl(row.employee, day.date)}
+                  />
+                ))}
+              </div>
+            ))}
+          </div>
+        </article>
+
+        <article className="panel-card">
+          <div className="card-heading">
+            <div>
+              <h3>Control de asistencia</h3>
+              <p>Autoriza ingreso, justifica faltas o marca ausencia.</p>
+            </div>
+          </div>
+
+          <form className="form-layout" onSubmit={onSaveAttendance}>
+            <div className="form-grid">
+              <label>
+                Empleado
+                <select
+                  value={attendanceForm.employeeId}
+                  onChange={(event) =>
+                    setAttendanceForm((current) => ({
+                      ...current,
+                      employeeId: event.target.value,
+                    }))
+                  }
+                >
+                  <option value="">Selecciona</option>
+                  {employees.map((employee) => (
+                    <option key={employee.id} value={employee.id}>
+                      {employee.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Fecha
+                <input
+                  type="date"
+                  value={attendanceForm.date}
+                  onChange={(event) =>
+                    setAttendanceForm((current) => ({ ...current, date: event.target.value }))
+                  }
+                />
+              </label>
+              <label>
+                Hora de ingreso
+                <input
+                  type="time"
+                  value={attendanceForm.clockIn}
+                  onChange={(event) =>
+                    setAttendanceForm((current) => ({ ...current, clockIn: event.target.value }))
+                  }
+                />
+              </label>
+              <label>
+                Tipo de falta
+                <select
+                  value={attendanceForm.absenceType}
+                  onChange={(event) =>
+                    setAttendanceForm((current) => ({
+                      ...current,
+                      absenceType: event.target.value,
+                    }))
+                  }
+                >
+                  <option value="">Sin falta</option>
+                  <option value="justificada">Falta justificada</option>
+                  <option value="no_justificada">Falta no justificada</option>
+                </select>
+              </label>
+            </div>
+
+            <label>
+              Observación
+              <textarea
+                rows="4"
+                value={attendanceForm.notes}
+                onChange={(event) =>
+                  setAttendanceForm((current) => ({ ...current, notes: event.target.value }))
+                }
+              />
+            </label>
+
+            <div className="button-group">
+              <button className="primary-button" type="submit">
+                Guardar control
+              </button>
+              <button className="soft-button" type="button" onClick={onQuickClockIn}>
+                Marcar ingreso ahora
+              </button>
+            </div>
+          </form>
+        </article>
+      </div>
+    </section>
+  );
+}
+
+function PayrollView({
+  payrollView,
+  filtersOptions,
+  payrollFilters,
+  setPayrollFilters,
+  chartMode,
+  setChartMode,
+  excelRows,
+  excelFileName,
+  onUploadExcel,
+  accountMode,
+}) {
+  return (
+    <section className="module-shell">
+      <div className="section-grid">
+        <MetricCard
+          label="Gasto total en horas extras"
+          value={formatCurrency(payrollView.summary.overtimeSpend)}
+          detail="Filtrado por año, mes, empleado o cargo"
+        />
+        <MetricCard
+          label="Horas previstas"
+          value={formatNumber(payrollView.summary.plannedHours)}
+          detail="Carga horaria proyectada"
+          tone="magenta"
+        />
+        <MetricCard
+          label="Horas trabajadas"
+          value={formatNumber(payrollView.summary.workedHours)}
+          detail="Ejecución real"
+          tone="lilac"
+        />
+        <MetricCard
+          label="Cálculo final"
+          value={formatCurrency(payrollView.summary.finalTotal)}
+          detail="Salarios + recargo nocturno + horas extra"
+          tone="slate"
+        />
+      </div>
+
+      <article className="panel-card">
+        <div className="card-heading">
+          <div>
+            <h3>Filtros de análisis</h3>
+            <p>Agrupa la vista por año, mes, empleado o cargo.</p>
+          </div>
+        </div>
+
+        <div className="form-grid">
+          <label>
+            Año
+            <select
+              value={payrollFilters.year}
+              onChange={(event) =>
+                setPayrollFilters((current) => ({ ...current, year: event.target.value }))
+              }
+            >
+              <option value="">Todos</option>
+              {filtersOptions.years.map((year) => (
+                <option key={year} value={year}>
+                  {year}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Mes
+            <select
+              value={payrollFilters.monthKey}
+              onChange={(event) =>
+                setPayrollFilters((current) => ({ ...current, monthKey: event.target.value }))
+              }
+            >
+              <option value="">Todos</option>
+              {filtersOptions.months.map((month) => (
+                <option key={month.key} value={month.key}>
+                  {month.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Empleado
+            <select
+              value={payrollFilters.employeeId}
+              onChange={(event) =>
+                setPayrollFilters((current) => ({
+                  ...current,
+                  employeeId: event.target.value,
+                }))
+              }
+            >
+              <option value="">Todos</option>
+              {filtersOptions.employees.map((employee) => (
+                <option key={employee.id} value={employee.id}>
+                  {employee.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Cargo
+            <select
+              value={payrollFilters.position}
+              onChange={(event) =>
+                setPayrollFilters((current) => ({ ...current, position: event.target.value }))
+              }
+            >
+              <option value="">Todos</option>
+              {filtersOptions.positions.map((position) => (
+                <option key={position} value={position}>
+                  {position}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+      </article>
+
+      <div className="content-grid">
+        <article className="panel-card">
+          <div className="card-heading">
+            <div>
+              <h3>Horas extras por mes</h3>
+              <p>Conmutador entre horas y gasto.</p>
+            </div>
+            <div className="segmented-control">
+              <button
+                className={chartMode === "hours" ? "active" : ""}
+                onClick={() => setChartMode("hours")}
+              >
+                Horas
+              </button>
+              <button
+                className={chartMode === "spend" ? "active" : ""}
+                onClick={() => setChartMode("spend")}
+              >
+                Gasto
+              </button>
+            </div>
+          </div>
+          <div className="chart-bars">
+            {(chartMode === "hours" ? payrollView.charts.overtimeByMonth : payrollView.charts.spendByMonth).map(
+              (item) => {
+                const dataSet =
+                  chartMode === "hours"
+                    ? payrollView.charts.overtimeByMonth
+                    : payrollView.charts.spendByMonth;
+                const max = Math.max(...dataSet.map((entry) => Number(entry.value || 0)), 1);
+
+                return (
+                  <div className="chart-row" key={item.id}>
+                    <span>{item.label}</span>
+                    <div className="chart-track">
+                      <div
+                        className={`chart-fill ${chartMode === "hours" ? "violet" : "magenta"}`}
+                        style={{ width: `${Math.max(6, (Number(item.value || 0) / max) * 100)}%` }}
+                      />
+                    </div>
+                    <strong>
+                      {chartMode === "hours"
+                        ? formatNumber(item.value)
+                        : formatCurrency(item.value)}
+                    </strong>
+                  </div>
+                );
+              },
+            )}
+          </div>
+        </article>
+
+        <ChartCard
+          title="Horas extras por cargo"
+          subtitle="Comparativo por rol"
+          data={payrollView.charts.overtimeByPosition}
+          formatter={(value) => formatNumber(value)}
+          tone="lilac"
+        />
+      </div>
+
+      <div className="content-grid">
+        <ChartCard
+          title="Horas extras por turno"
+          subtitle="Carga por tipo de jornada"
+          data={payrollView.charts.overtimeByShift}
+          formatter={(value) => formatNumber(value)}
+          tone="slate"
+        />
+        <ChartCard
+          title="Horas extras por empleado"
+          subtitle="Ranking individual"
+          data={payrollView.charts.overtimeByEmployee}
+          formatter={(value) => formatNumber(value)}
+          tone="violet"
+        />
+      </div>
+
+      <div className="content-grid">
+        <ChartCard
+          title="Cantidad de empleados por cargo"
+          subtitle="Distribución interna"
+          data={payrollView.charts.employeesByPosition}
+          formatter={(value) => formatNumber(value, 0)}
+          tone="magenta"
+        />
+        <ChartCard
+          title="Gasto final con horas extra por mes"
+          subtitle="Costo extraordinario mensual"
+          data={payrollView.charts.finalExpenseByMonth}
+          formatter={(value) => formatCurrency(value)}
+          tone="slate"
+        />
+      </div>
+
+      <article className="panel-card">
+        <div className="card-heading">
+          <div>
+            <h3>Visualización de Excel</h3>
+            <p>
+              {accountMode === "demo"
+                ? "La cuenta demo incluye un Excel de demostración y también permite cargar otro archivo."
+                : "Carga un Excel para ver su detalle dentro del dashboard."}
+            </p>
+          </div>
+          <label className="upload-button">
+            Cargar Excel
+            <input type="file" accept=".xlsx" onChange={onUploadExcel} />
+          </label>
+        </div>
+
+        <p className="muted-line">
+          Archivo actual: <strong>{excelFileName}</strong>
+        </p>
+
+        <div className="table-wrapper">
+          <table>
+            <thead>
+              <tr>
+                {Object.keys(excelRows[0] || {}).map((header) => (
+                  <th key={header}>{header}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {excelRows.length ? (
+                excelRows.map((row, index) => (
+                  <tr key={`excel-${index}`}>
+                    {Object.keys(excelRows[0]).map((header) => (
+                      <td key={`${header}-${index}`}>{String(row[header] ?? "")}</td>
+                    ))}
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td colSpan="9">
+                    <div className="empty-card">
+                      <p>No hay archivo cargado en esta cuenta.</p>
+                    </div>
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </article>
+    </section>
+  );
 }
 
 function App() {
-  const [session, setSession] = useState(() =>
-    loadStorage(STORAGE_KEYS.session, {
-      isAuthenticated: false,
-      email: "",
-    }),
-  );
-  const [settings, setSettings] = useState(() =>
-    loadStorage(STORAGE_KEYS.settings, DEFAULT_SETTINGS),
-  );
-  const [loginForm, setLoginForm] = useState({
-    email: "",
-    password: "",
-  });
+  const [session, setSession] = useState(() => loadSession());
+  const [data, setData] = useState(() => createEmptyDataForSession(loadSession()));
+  const [loginForm, setLoginForm] = useState({ email: "", password: "" });
   const [loginError, setLoginError] = useState("");
-  const [rows, setRows] = useState(SAMPLE_ROWS);
-  const [mapping, setMapping] = useState(() =>
-    detectColumnMap(Object.keys(SAMPLE_ROWS[0] || {})),
-  );
-  const [fileName, setFileName] = useState("demo-base-horas-extras.xlsx");
-  const [importError, setImportError] = useState("");
-  const [employees, setEmployees] = useState([]);
+  const [activeView, setActiveView] = useState("dashboard");
+  const [notice, setNotice] = useState("");
+  const [employeeForm, setEmployeeForm] = useState(() => createEmployeeDraft());
   const [selectedEmployeeId, setSelectedEmployeeId] = useState("");
-  const [search, setSearch] = useState("");
-  const [notice, setNotice] = useState({
-    type: "info",
-    message: "Base demo cargada. Puedes importar Excel o trabajar con el ejemplo inicial.",
+  const [attendanceForm, setAttendanceForm] = useState({
+    employeeId: "",
+    date: TODAY,
+    clockIn: CURRENT_TIME,
+    absenceType: "",
+    notes: "",
   });
-  const [activeWorkspace, setActiveWorkspace] = useState("legacy");
-  const [isPending, startTransition] = useTransition();
-  const deferredSearch = useDeferredValue(search);
+  const [payrollFilters, setPayrollFilters] = useState({
+    year: "2026",
+    monthKey: "",
+    employeeId: "",
+    position: "",
+  });
+  const [chartMode, setChartMode] = useState("hours");
+  const [excelFileName, setExcelFileName] = useState("demo-nomina.xlsx");
 
   useEffect(() => {
-    saveStorage(STORAGE_KEYS.session, session);
+    saveSession(session);
   }, [session]);
 
   useEffect(() => {
-    saveStorage(STORAGE_KEYS.settings, settings);
-  }, [settings]);
-
-  useEffect(() => {
-    startTransition(() => {
-      const nextEmployees = buildEmployees(rows, mapping, settings);
-      setEmployees(nextEmployees);
-
-      if (!nextEmployees.some((employee) => employee.id === selectedEmployeeId)) {
-        setSelectedEmployeeId(nextEmployees[0]?.id || "");
-      }
-    });
-  }, [mapping, rows, selectedEmployeeId, settings, startTransition]);
-
-  const headers = Object.keys(rows[0] || {});
-  const selectedEmployee =
-    employees.find((employee) => employee.id === selectedEmployeeId) || null;
-  const contextDate =
-    selectedEmployee?.periodDate || settings.periodDate || DEFAULT_SETTINGS.periodDate;
-  const summary = summarizeEmployees(employees);
-  const conceptSummary = summarizeByConcept(employees);
-  const alerts = buildOperationalAlerts(employees);
-
-  const filteredEmployees = employees.filter((employee) => {
-    const searchValue = normalizeText(deferredSearch);
-
-    if (!searchValue) {
-      return true;
+    if (session.isAuthenticated && session.email) {
+      saveAccountData(session.email, data);
     }
+  }, [data, session]);
 
-    return (
-      normalizeText(employee.employeeName).includes(searchValue) ||
-      normalizeText(employee.documentNumber).includes(searchValue) ||
-      normalizeText(employee.internalCode).includes(searchValue)
-    );
-  });
+  const account = LOGIN_ACCOUNTS.find((item) => item.email === session.email) || null;
+  const employees = data.employees;
+  const selectedEmployee =
+    employees.find((employee) => employee.id === selectedEmployeeId) || employees[0] || null;
+  const scheduleView = getScheduleWeekView(data);
+  const operations = getCurrentOperationsStats(data);
+  const filtersOptions = {
+    ...getPayrollFiltersOptions(data),
+    employees: employees.filter((employee) => employee.status !== "Vacante"),
+  };
+  const payrollView = getPayrollDashboard(data, payrollFilters);
+  const excelRows = getExcelRows(data);
 
-  function showNotice(message, type = "info") {
-    setNotice({ message, type });
+  function showNotice(message) {
+    setNotice(message);
+    window.setTimeout(() => setNotice(""), 2400);
   }
 
-  function updateSettings(field, value) {
-    setSettings((current) => ({ ...current, [field]: value }));
-  }
-
-  function handleLocalLogin(event) {
+  function handleLogin(event) {
     event.preventDefault();
+    const accountMatch = getAccountByCredentials(loginForm.email, loginForm.password);
 
-    const normalizedEmail = loginForm.email.trim().toLowerCase();
-    const password = loginForm.password;
-
-    if (
-      normalizedEmail === APP_CREDENTIALS.email &&
-      password === APP_CREDENTIALS.password
-    ) {
-      setSession({
-        isAuthenticated: true,
-        email: normalizedEmail,
-      });
-      setLoginError("");
-      setLoginForm({
-        email: "",
-        password: "",
-      });
-      showNotice(`Sesión iniciada correctamente en ${BRAND_NAME}.`, "success");
+    if (!accountMatch) {
+      setLoginError("Credenciales inválidas.");
       return;
     }
 
-    setLoginError("Credenciales inválidas. Verifica el usuario y la contraseña.");
-  }
-
-  function handleLocalLogout() {
     setSession({
-      isAuthenticated: false,
-      email: "",
+      isAuthenticated: true,
+      email: accountMatch.email,
+    });
+    setData(loadAccountData(accountMatch.email));
+    setExcelFileName(accountMatch.mode === "demo" ? "demo-nomina.xlsx" : "sin-archivo");
+    setLoginError("");
+    setNotice("");
+    setActiveView("dashboard");
+    setEmployeeForm(createEmployeeDraft());
+    setSelectedEmployeeId("");
+    setAttendanceForm({
+      employeeId: "",
+      date: TODAY,
+      clockIn: CURRENT_TIME,
+      absenceType: "",
+      notes: "",
     });
   }
 
-  async function runAction(label, task) {
-    try {
-      await task();
-    } catch (error) {
-      const message = error.message || `No fue posible completar ${label}.`;
-
-      if (label === "importar Excel") {
-        setImportError(message);
-      }
-
-      showNotice(message, "error");
-    }
+  function handleLogout() {
+    setSession({ isAuthenticated: false, email: "" });
+    setData(createEmptyDataForSession(null));
+    setLoginForm({ email: "", password: "" });
+    setSelectedEmployeeId("");
   }
 
-  async function handleImportFile(event) {
+  function handleSelectEmployee(employee) {
+    setSelectedEmployeeId(employee.id);
+    setEmployeeForm({
+      id: employee.id,
+      admissionDate: employee.admissionDate,
+      name: employee.name,
+      position: employee.position,
+      salaryBase: employee.salaryBase,
+      weeklyHours: employee.weeklyHours,
+      hourlyValue: employee.hourlyValue,
+      restDay: employee.restDay,
+      shiftId: employee.shiftId,
+      status: employee.status,
+    });
+  }
+
+  function handleResetEmployee() {
+    setEmployeeForm(createEmployeeDraft());
+  }
+
+  function handleSaveEmployee(event) {
+    event.preventDefault();
+
+    if (!employeeForm.name.trim() || !employeeForm.position.trim()) {
+      setLoginError("");
+      showNotice("Completa al menos nombre y cargo del empleado.");
+      return;
+    }
+
+    const nextData = upsertEmployee(data, employeeForm);
+    setData(nextData);
+    showNotice("Empleado guardado correctamente.");
+  }
+
+  function handleDeleteEmployee() {
+    if (!employeeForm.id) {
+      showNotice("Selecciona un empleado existente para eliminar.");
+      return;
+    }
+
+    setData(deleteEmployee(data, employeeForm.id));
+    setEmployeeForm(createEmployeeDraft());
+    setSelectedEmployeeId("");
+    showNotice("Empleado eliminado del registro.");
+  }
+
+  function handleSelectAttendance(employee, date) {
+    const record = data.attendance.find(
+      (entry) => entry.employeeId === employee.id && entry.date === date,
+    );
+
+    setAttendanceForm({
+      employeeId: employee.id,
+      date,
+      clockIn: record?.clockIn || CURRENT_TIME,
+      absenceType: record?.absenceType || "",
+      notes: record?.notes || "",
+    });
+  }
+
+  function handleSaveAttendance(event) {
+    event.preventDefault();
+
+    if (!attendanceForm.employeeId) {
+      showNotice("Selecciona un empleado para guardar el control.");
+      return;
+    }
+
+    const payload =
+      attendanceForm.absenceType
+        ? { ...attendanceForm, clockIn: "" }
+        : attendanceForm;
+
+    setData(upsertAttendance(data, payload));
+    showNotice("Control de asistencia actualizado.");
+  }
+
+  function handleQuickClockIn() {
+    if (!attendanceForm.employeeId) {
+      showNotice("Selecciona un empleado antes de marcar ingreso.");
+      return;
+    }
+
+    setAttendanceForm((current) => ({
+      ...current,
+      clockIn: CURRENT_TIME,
+      absenceType: "",
+    }));
+    setData(
+      upsertAttendance(data, {
+        ...attendanceForm,
+        clockIn: CURRENT_TIME,
+        absenceType: "",
+      }),
+    );
+    showNotice("Ingreso autorizado correctamente.");
+  }
+
+  async function handleUploadExcel(event) {
     const file = event.target.files?.[0];
 
     if (!file) {
       return;
     }
 
-    await runAction("importar Excel", async () => {
+    try {
       const sheetRows = await readXlsxFile(file);
-      const objectRows = getObjectRows(sheetRows);
-
-      if (!objectRows.length) {
-        throw new Error("El archivo no tiene filas útiles para procesar.");
-      }
-
-      const detectedMapping = detectColumnMap(Object.keys(objectRows[0]));
-      setImportError("");
-      setFileName(file.name);
-
-      startTransition(() => {
-        setRows(objectRows);
-        setMapping(detectedMapping);
-      });
-
-      showNotice(
-        `Base importada desde ${file.name}. Se detectaron ${objectRows.length} filas.`,
-        "success",
-      );
-    });
+      const rows = getRowsFromSheet(sheetRows);
+      setData(setUploadedExcelRows(data, rows));
+      setExcelFileName(file.name);
+      showNotice("Excel cargado correctamente.");
+    } catch {
+      showNotice("No fue posible leer el archivo Excel.");
+    }
 
     event.target.value = "";
   }
 
-  function handleLoadDemo() {
-    startTransition(() => {
-      setRows(SAMPLE_ROWS);
-      setMapping(detectColumnMap(Object.keys(SAMPLE_ROWS[0] || {})));
-      setFileName("demo-base-horas-extras.xlsx");
-      setSelectedEmployeeId("");
-    });
-
-    setImportError("");
-    showNotice("Se restauró la base demo con personas de referencia.", "info");
-  }
-
-  function handleClearImport() {
-    startTransition(() => {
-      setRows([]);
-      setMapping({});
-      setSelectedEmployeeId("");
-    });
-
-    setFileName("sin-archivo");
-    setImportError("");
-    showNotice("La base actual fue limpiada. Puedes importar un nuevo Excel.", "info");
-  }
-
-  async function handleExportExcel() {
-    if (!employees.length) {
-      showNotice("No hay datos procesados para exportar a Excel.", "warning");
-      return;
-    }
-
-    await runAction("exportar Excel", async () => {
-      const { default: writeXlsxFile } = await import("write-excel-file/browser");
-      const workbookData = [
-        buildSummarySheet(summary, fileName, contextDate),
-        buildEmployeesSheet(employees),
-        buildConceptSheet(conceptSummary),
-      ];
-      const sheetNames = ["Resumen", "Personas", "Conceptos"];
-
-      if (selectedEmployee) {
-        workbookData.push(buildSelectedEmployeeSheet(selectedEmployee));
-        sheetNames.push("Detalle persona");
-      }
-
-      await writeXlsxFile(workbookData, {
-        sheets: sheetNames,
-        fileName: `${buildExportBaseName(fileName)}-kaiko.xlsx`,
-      });
-
-      showNotice("La exportación en Excel fue generada correctamente.", "success");
-    });
-  }
-
-  async function handleExportPdf() {
-    if (!employees.length) {
-      showNotice("No hay datos procesados para exportar a PDF.", "warning");
-      return;
-    }
-
-    await runAction("exportar PDF", async () => {
-      const [{ jsPDF }, { default: autoTable }] = await Promise.all([
-        import("jspdf"),
-        import("jspdf-autotable"),
-      ]);
-
-      const doc = new jsPDF({
-        orientation: "landscape",
-        unit: "pt",
-        format: "a4",
-      });
-
-      doc.setFontSize(20);
-      doc.setTextColor(...BRAND_RGB);
-      doc.text(BRAND_NAME, 40, 42);
-
-      doc.setFontSize(11);
-      doc.setTextColor(60, 45, 76);
-      doc.text("Reporte de horas extras y recargos", 40, 64);
-      doc.text(`Archivo base: ${fileName}`, 40, 82);
-      doc.text(`Fecha de referencia: ${contextDate}`, 40, 98);
-
-      autoTable(doc, {
-        startY: 120,
-        head: [["Indicador", "Valor"]],
-        body: [
-          ["Personas liquidadas", formatNumber(summary.totalEmployees, 0)],
-          ["Horas extra acumuladas", formatNumber(summary.totalOvertimeHours)],
-          ["Recargos acumulados", formatNumber(summary.totalSurchargeHours)],
-          ["Valor total estimado", formatCurrency(summary.totalValue)],
-        ],
-        headStyles: {
-          fillColor: BRAND_RGB,
-        },
-        styles: {
-          fontSize: 10,
-        },
-      });
-
-      autoTable(doc, {
-        startY: doc.lastAutoTable.finalY + 18,
-        head: [[
-          "Empleado",
-          "Documento",
-          "Código",
-          "Período",
-          "Horas extra",
-          "Recargos",
-          "Total",
-        ]],
-        body: employees.map((employee) => [
-          employee.employeeName || "Sin nombre",
-          employee.documentNumber || "",
-          employee.internalCode || "",
-          employee.periodDate,
-          formatNumber(employee.overtimeHours),
-          formatNumber(employee.surchargeHours),
-          formatCurrency(employee.totalValue),
-        ]),
-        headStyles: {
-          fillColor: BRAND_RGB,
-        },
-        styles: {
-          fontSize: 9,
-        },
-      });
-
-      autoTable(doc, {
-        startY: doc.lastAutoTable.finalY + 18,
-        head: [["Código", "Concepto", "Cantidad", "Valor"]],
-        body: conceptSummary.map((item) => [
-          item.short,
-          item.label,
-          formatNumber(item.quantity),
-          formatCurrency(item.totalValue),
-        ]),
-        headStyles: {
-          fillColor: BRAND_RGB,
-        },
-        styles: {
-          fontSize: 9,
-        },
-      });
-
-      if (selectedEmployee) {
-        doc.addPage();
-        doc.setFontSize(18);
-        doc.setTextColor(...BRAND_RGB);
-        doc.text(selectedEmployee.employeeName || "Detalle de persona", 40, 42);
-
-        doc.setFontSize(11);
-        doc.setTextColor(60, 45, 76);
-        doc.text(`Documento: ${selectedEmployee.documentNumber || "Sin documento"}`, 40, 64);
-        doc.text(`Código interno: ${selectedEmployee.internalCode || "Sin código"}`, 40, 80);
-        doc.text(`Período: ${selectedEmployee.periodDate}`, 40, 96);
-
-        autoTable(doc, {
-          startY: 120,
-          head: [[
-            "Concepto",
-            "Código",
-            "Cantidad",
-            "Multiplicador",
-            "Valor unitario",
-            "Valor total",
-          ]],
-          body: selectedEmployee.breakdown.map((line) => [
-            line.label,
-            line.short,
-            formatNumber(line.quantity),
-            `${line.mode === "full" ? "x" : "+"}${line.multiplier.toFixed(2)}`,
-            formatCurrency(line.unitValue),
-            formatCurrency(line.totalValue),
-          ]),
-          headStyles: {
-            fillColor: BRAND_RGB,
-          },
-          styles: {
-            fontSize: 9,
-          },
-        });
-      }
-
-      doc.save(`${buildExportBaseName(fileName)}-kaiko.pdf`);
-      showNotice("La exportación en PDF fue generada correctamente.", "success");
-    });
-  }
-
   if (!session.isAuthenticated) {
     return (
-      <div className="auth-shell">
-        <section className="auth-card">
-          <div className="auth-brand">
-            <img
-              className="brand-mark auth-mark"
-              src="/branding/logoIOS.png"
-              alt={`Logo ${BRAND_NAME}`}
-            />
-            <p className="eyebrow">Acceso interno</p>
+      <div className="login-page">
+        <section className="login-card">
+          <div className="login-brand">
+            <img src="/branding/logoIOS.png" alt={`Logo ${BRAND_NAME}`} className="login-logo" />
+            <p className="eyebrow">Acceso corporativo</p>
             <h1>{BRAND_NAME}</h1>
-            <p className="auth-copy">
-              Ingresa con tus credenciales internas para acceder al módulo de horas
-              extras y recargos.
+            <p>
+              Dashboard ejecutivo de empleados, horario y nómina. El acceso es obligatorio
+              desde la primera vista del aplicativo.
             </p>
-            <div className="hero-tags">
-              <span>Módulo protegido</span>
-              <span>Horas extras Colombia</span>
-              <span>Desarrollado por Zivra Studio</span>
-            </div>
           </div>
 
-          <form className="auth-form" onSubmit={handleLocalLogin}>
-            <label className="auth-field">
-              <span className="auth-field-label">Usuario</span>
+          <form className="login-form" onSubmit={handleLogin}>
+            <label>
+              Correo electrónico
               <input
                 type="email"
                 value={loginForm.email}
-                onChange={(event) => {
-                  setLoginError("");
-                  setLoginForm((current) => ({
-                    ...current,
-                    email: event.target.value,
-                  }));
-                }}
-                placeholder="Correo electrónico"
+                onChange={(event) =>
+                  setLoginForm((current) => ({ ...current, email: event.target.value }))
+                }
                 autoComplete="username"
               />
             </label>
-            <label className="auth-field">
-              <span className="auth-field-label">Contraseña</span>
+            <label>
+              Contraseña
               <input
                 type="password"
                 value={loginForm.password}
-                onChange={(event) => {
-                  setLoginError("");
-                  setLoginForm((current) => ({
-                    ...current,
-                    password: event.target.value,
-                  }));
-                }}
-                placeholder="Ingresa tu contraseña"
+                onChange={(event) =>
+                  setLoginForm((current) => ({ ...current, password: event.target.value }))
+                }
                 autoComplete="current-password"
               />
             </label>
-            {loginError ? <p className="inline-error">{loginError}</p> : null}
-            <button className="button primary auth-submit" type="submit">
-              Ingresar a {BRAND_NAME}
+            {loginError ? <p className="form-error">{loginError}</p> : null}
+            <button className="primary-button wide" type="submit">
+              Ingresar
             </button>
           </form>
         </section>
@@ -570,456 +1113,104 @@ function App() {
   }
 
   return (
-    <div className="app-shell">
-      <header className="hero-card">
-        <div className="hero-copy">
-          <div className="brand-row">
-            <img className="brand-mark" src="/branding/logoIOS.png" alt={`Logo ${BRAND_NAME}`} />
-            <div>
-              <p className="eyebrow">Software de horas extras para Colombia</p>
-              <h1>{BRAND_NAME}</h1>
-            </div>
+    <div className="dashboard-shell">
+      <aside className="sidebar">
+        <div className="sidebar-brand">
+          <img src="/branding/logoIOS.png" alt={`Logo ${BRAND_NAME}`} className="sidebar-logo" />
+          <div>
+            <p className="eyebrow">Plan software dashboard</p>
+            <h1>{BRAND_NAME}</h1>
           </div>
+        </div>
 
-          <p className="hero-text">
-            Plataforma contable enfocada en horas extras, recargos, turnos, novedades
-            y liquidación laboral, con importación de Excel, cálculo operativo,
-            consolidado por persona y un módulo ampliado de gestión interna.
-          </p>
-
-          <div className="hero-tags">
-            <span>Base en Excel</span>
-            <span>Control interno</span>
-            <span>Exportación directa</span>
-            <span>Desarrollado por Zivra Studio</span>
-            <button className="button ghost button-inline" onClick={handleLocalLogout}>
-              Cerrar sesión
+        <nav className="sidebar-nav">
+          {NAV_ITEMS.map((item) => (
+            <button
+              key={item.id}
+              className={`sidebar-link ${activeView === item.id ? "active" : ""}`}
+              onClick={() => setActiveView(item.id)}
+            >
+              {item.label}
             </button>
-          </div>
+          ))}
+        </nav>
+
+        <div className="sidebar-footer">
+          <span className={`account-pill ${account?.mode || "admin"}`}>
+            {account?.mode === "demo" ? "Entorno demo" : "Entorno admin"}
+          </span>
+          <small>{session.email}</small>
+          <button className="soft-button wide" onClick={handleLogout}>
+            Cerrar sesión
+          </button>
         </div>
+      </aside>
 
-        <div className="hero-stats">
-          <div className="stat-card accent">
-            <span className="stat-label">Personas procesadas</span>
-            <strong>{formatNumber(summary.totalEmployees, 0)}</strong>
-            <small>{fileName}</small>
+      <main className="main-area">
+        <header className="topbar">
+          <div>
+            <p className="eyebrow">Operación interna</p>
+            <h2>
+              {activeView === "dashboard" ? "Resumen general" : NAV_ITEMS.find((item) => item.id === activeView)?.label}
+            </h2>
           </div>
-          <div className="stat-card">
-            <span className="stat-label">Horas extra</span>
-            <strong>{formatNumber(summary.totalOvertimeHours)}</strong>
-            <small>Conceptos extraordinarios liquidados</small>
+          <div className="topbar-actions">
+            <span>{TODAY}</span>
+            <span>{CURRENT_TIME}</span>
           </div>
-          <div className="stat-card">
-            <span className="stat-label">Recargos</span>
-            <strong>{formatNumber(summary.totalSurchargeHours)}</strong>
-            <small>Nocturnos, dominicales y festivos</small>
-          </div>
-          <div className="stat-card">
-            <span className="stat-label">Valor estimado</span>
-            <strong>{formatCurrency(summary.totalValue)}</strong>
-            <small>Proyección local del período</small>
-          </div>
-        </div>
-      </header>
+        </header>
 
-      {notice ? (
-        <section className={`status-banner ${notice.type}`}>
-          <strong>{notice.message}</strong>
-        </section>
-      ) : null}
+        {notice ? <div className="inline-notice">{notice}</div> : null}
 
-      <nav className="workspace-tabs" aria-label="Módulos principales">
-        <button
-          className={`workspace-tab ${activeWorkspace === "legacy" ? "active" : ""}`}
-          onClick={() => setActiveWorkspace("legacy")}
-        >
-          Horas extras
-        </button>
-        <button
-          className={`workspace-tab ${activeWorkspace === "workforce" ? "active" : ""}`}
-          onClick={() => setActiveWorkspace("workforce")}
-        >
-          Gestión laboral
-        </button>
-      </nav>
+        {activeView === "dashboard" ? (
+          <DashboardView
+            payrollView={payrollView}
+            operations={operations}
+            onChangeView={setActiveView}
+          />
+        ) : null}
 
-      {activeWorkspace === "legacy" ? (
-        <main className="dashboard-grid">
-        <section className="panel panel-import">
-          <div className="panel-heading">
-            <div>
-              <p className="eyebrow">1. Base operativa</p>
-              <h2>Importador inteligente de Excel</h2>
-            </div>
-            <div className="panel-actions">
-              <label className="button primary">
-                Importar archivo
-                <input
-                  className="hidden-input"
-                  type="file"
-                  accept=".xlsx"
-                  onChange={handleImportFile}
-                />
-              </label>
-              <button className="button ghost" onClick={handleLoadDemo}>
-                Cargar demo
-              </button>
-              <button className="button ghost" onClick={handleClearImport}>
-                Limpiar
-              </button>
-            </div>
-          </div>
+        {activeView === "employees" ? (
+          <EmployeesView
+            employees={employees}
+            selectedEmployee={selectedEmployee}
+            employeeForm={employeeForm}
+            setEmployeeForm={setEmployeeForm}
+            onSelectEmployee={handleSelectEmployee}
+            onSaveEmployee={handleSaveEmployee}
+            onDeleteEmployee={handleDeleteEmployee}
+            onResetEmployee={handleResetEmployee}
+          />
+        ) : null}
 
-          <div className="import-grid">
-            <article className="surface-card">
-              <h3>Estado del archivo</h3>
-              <dl className="definition-grid">
-                <div>
-                  <dt>Archivo activo</dt>
-                  <dd>{fileName}</dd>
-                </div>
-                <div>
-                  <dt>Filas</dt>
-                  <dd>{formatNumber(rows.length, 0)}</dd>
-                </div>
-                <div>
-                  <dt>Columnas detectadas</dt>
-                  <dd>{formatNumber(headers.length, 0)}</dd>
-                </div>
-                <div>
-                  <dt>Procesando</dt>
-                  <dd>{isPending ? "Sí" : "No"}</dd>
-                </div>
-              </dl>
-              {importError ? <p className="inline-error">{importError}</p> : null}
-              <p className="muted">
-                Recomendación: incluye al menos nombre, documento y columnas como
-                HED, HEN, RN, DF, HEDF o HENDF. Si tu base está en formato `.xls`,
-                expórtala primero a `.xlsx`.
-              </p>
-            </article>
+        {activeView === "schedule" ? (
+          <ScheduleView
+            data={data}
+            employees={employees.filter((employee) => employee.status !== "Vacante")}
+            scheduleView={scheduleView}
+            attendanceForm={attendanceForm}
+            setAttendanceForm={setAttendanceForm}
+            onSelectControl={handleSelectAttendance}
+            onSaveAttendance={handleSaveAttendance}
+            onQuickClockIn={handleQuickClockIn}
+          />
+        ) : null}
 
-            <article className="surface-card">
-              <h3>Parámetros base</h3>
-              <div className="form-grid compact">
-                <label>
-                  Fecha por defecto
-                  <input
-                    type="date"
-                    value={settings.periodDate}
-                    onChange={(event) => updateSettings("periodDate", event.target.value)}
-                  />
-                </label>
-                <label>
-                  Días laborales por semana
-                  <input
-                    type="number"
-                    min="1"
-                    max="7"
-                    value={settings.workingDaysPerWeek}
-                    onChange={(event) =>
-                      updateSettings("workingDaysPerWeek", Number(event.target.value) || 6)
-                    }
-                  />
-                </label>
-                <label>
-                  Horas máximas semanales
-                  <input type="text" value={`${getWeeklyHours(contextDate)} h`} readOnly />
-                </label>
-                <label>
-                  Inicio de jornada nocturna
-                  <input
-                    type="text"
-                    value={`${getNightShiftStartHour(contextDate)}:00`}
-                    readOnly
-                  />
-                </label>
-              </div>
-            </article>
-          </div>
-
-          <div className="mapping-grid">
-            {FIELD_DEFINITIONS.map((field) => (
-              <label key={field.key} className="mapping-item">
-                <span>
-                  {field.label}
-                  {field.required ? <strong className="required-dot"> *</strong> : null}
-                </span>
-                <select
-                  value={mapping[field.key] || ""}
-                  onChange={(event) =>
-                    setMapping((current) => ({
-                      ...current,
-                      [field.key]: event.target.value,
-                    }))
-                  }
-                >
-                  <option value="">No asignado</option>
-                  {headers.map((header) => (
-                    <option key={header} value={header}>
-                      {header}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            ))}
-          </div>
-
-          <div className="table-shell">
-            <table>
-              <thead>
-                <tr>
-                  {headers.slice(0, 8).map((header) => (
-                    <th key={header}>{header}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {rows.slice(0, 4).map((row, index) => (
-                  <tr key={`preview-${index}`}>
-                    {headers.slice(0, 8).map((header) => (
-                      <td key={`${header}-${index}`}>{String(row[header] ?? "")}</td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </section>
-
-        <section className="panel panel-list">
-          <div className="panel-heading">
-            <div>
-              <p className="eyebrow">2. Personas</p>
-              <h2>Listado procesado</h2>
-            </div>
-            <input
-              className="search-input"
-              type="search"
-              placeholder="Buscar por nombre, documento o código"
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-            />
-          </div>
-
-          <div className="employee-list">
-            {filteredEmployees.map((employee) => (
-              <button
-                key={employee.id}
-                className={`employee-item ${employee.id === selectedEmployeeId ? "active" : ""}`}
-                onClick={() => setSelectedEmployeeId(employee.id)}
-              >
-                <div>
-                  <strong>{employee.employeeName || "Sin nombre"}</strong>
-                  <span>{employee.documentNumber || "Sin documento"}</span>
-                  <small>{employee.internalCode || "Sin código interno"}</small>
-                </div>
-                <div className="employee-item-meta">
-                  <span>{formatCurrency(employee.totalValue)}</span>
-                  <small>{formatNumber(employee.overtimeHours + employee.surchargeHours)} novedades</small>
-                </div>
-              </button>
-            ))}
-          </div>
-        </section>
-
-        <section className="panel panel-detail">
-          <div className="panel-heading">
-            <div>
-              <p className="eyebrow">3. Detalle</p>
-              <h2>{selectedEmployee ? selectedEmployee.employeeName : "Selecciona una persona"}</h2>
-            </div>
-            {selectedEmployee ? (
-              <div className="chip-group">
-                <span>{selectedEmployee.documentNumber}</span>
-                <span>{selectedEmployee.periodDate}</span>
-                <span>{selectedEmployee.nightShiftStartHour}:00 noche</span>
-              </div>
-            ) : null}
-          </div>
-
-          {selectedEmployee ? (
-            <>
-              <div className="detail-hero">
-                <article className="surface-card">
-                  <h3>Base de cálculo</h3>
-                  <dl className="definition-grid">
-                    <div>
-                      <dt>Salario base</dt>
-                      <dd>{formatCurrency(selectedEmployee.baseSalary)}</dd>
-                    </div>
-                    <div>
-                      <dt>Valor hora</dt>
-                      <dd>{formatCurrency(selectedEmployee.hourlyRate)}</dd>
-                    </div>
-                    <div>
-                      <dt>Horas mes</dt>
-                      <dd>{formatNumber(selectedEmployee.monthlyHours)}</dd>
-                    </div>
-                    <div>
-                      <dt>Código interno</dt>
-                      <dd>{selectedEmployee.internalCode || "Pendiente"}</dd>
-                    </div>
-                  </dl>
-                </article>
-
-                <article className="surface-card">
-                  <h3>Resumen de la persona</h3>
-                  <dl className="definition-grid">
-                    <div>
-                      <dt>Horas extra</dt>
-                      <dd>{formatNumber(selectedEmployee.overtimeHours)}</dd>
-                    </div>
-                    <div>
-                      <dt>Recargos</dt>
-                      <dd>{formatNumber(selectedEmployee.surchargeHours)}</dd>
-                    </div>
-                    <div>
-                      <dt>Dominical o festivo</dt>
-                      <dd>{(selectedEmployee.sundayRate * 100).toFixed(0)}%</dd>
-                    </div>
-                    <div>
-                      <dt>Total calculado</dt>
-                      <dd>{formatCurrency(selectedEmployee.totalValue)}</dd>
-                    </div>
-                  </dl>
-                </article>
-              </div>
-
-              <div className="table-shell">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Concepto</th>
-                      <th>Cantidad</th>
-                      <th>Multiplicador</th>
-                      <th>Valor unitario</th>
-                      <th>Valor total</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {selectedEmployee.breakdown.map((line) => (
-                      <tr key={line.key}>
-                        <td>
-                          <strong>{line.label}</strong>
-                          <small>{line.short}</small>
-                        </td>
-                        <td>{formatNumber(line.quantity)}</td>
-                        <td>
-                          {line.mode === "full" ? "x" : "+"}
-                          {line.multiplier.toFixed(2)}
-                        </td>
-                        <td>{formatCurrency(line.unitValue)}</td>
-                        <td>{formatCurrency(line.totalValue)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </>
-          ) : (
-            <div className="empty-state">
-              <p>No hay personas para mostrar todavía.</p>
-            </div>
-          )}
-        </section>
-
-        <section className="panel panel-ops">
-          <div className="panel-heading">
-            <div>
-              <p className="eyebrow">4. Control</p>
-              <h2>Alertas y consolidado</h2>
-            </div>
-          </div>
-
-          <div className="ops-grid">
-            <article className="surface-card">
-              <h3>Alertas automáticas</h3>
-              <ul className="log-list">
-                {alerts.map((alert, index) => (
-                  <li key={`alert-${index}`} className={`log-item ${alert.type}`}>
-                    <strong>{alert.title}</strong>
-                    <span>{alert.detail}</span>
-                  </li>
-                ))}
-              </ul>
-            </article>
-
-            <article className="surface-card">
-              <h3>Consolidado por concepto</h3>
-              <div className="table-shell mini-table">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Código</th>
-                      <th>Concepto</th>
-                      <th>Cantidad</th>
-                      <th>Valor</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {conceptSummary.map((item) => (
-                      <tr key={item.key}>
-                        <td>{item.short}</td>
-                        <td>{item.label}</td>
-                        <td>{formatNumber(item.quantity)}</td>
-                        <td>{formatCurrency(item.totalValue)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </article>
-          </div>
-        </section>
-
-        <section className="panel panel-export">
-          <div className="panel-heading">
-            <div>
-              <p className="eyebrow">5. Exportación</p>
-              <h2>Salida de datos en PDF o Excel</h2>
-            </div>
-            <div className="panel-actions">
-              <button className="button ghost" onClick={handleExportPdf}>
-                Exportar PDF
-              </button>
-              <button className="button primary" onClick={handleExportExcel}>
-                Exportar Excel
-              </button>
-            </div>
-          </div>
-
-          <div className="payload-grid">
-            <article className="surface-card">
-              <h3>Resumen de cierre</h3>
-              <ul className="mini-list">
-                <li>Personas liquidadas: {formatNumber(summary.totalEmployees, 0)}</li>
-                <li>Horas extra acumuladas: {formatNumber(summary.totalOvertimeHours)}</li>
-                <li>Recargos acumulados: {formatNumber(summary.totalSurchargeHours)}</li>
-                <li>Valor total del período: {formatCurrency(summary.totalValue)}</li>
-              </ul>
-            </article>
-
-            <article className="surface-card">
-              <h3>Contenido de la exportación</h3>
-              <ul className="mini-list">
-                <li>Resumen general del período y archivo base cargado.</li>
-                <li>Listado de personas procesadas con sus totales.</li>
-                <li>Consolidado por concepto de hora extra y recargo.</li>
-                <li>Detalle individual de la persona seleccionada, si aplica.</li>
-              </ul>
-            </article>
-          </div>
-        </section>
-        </main>
-      ) : (
-        <WorkforceModule
-          currentUserEmail={session.email}
-          legacyEmployees={employees}
-          legacyFileName={fileName}
-          onNotice={showNotice}
-        />
-      )}
+        {activeView === "payroll" ? (
+          <PayrollView
+            payrollView={payrollView}
+            filtersOptions={filtersOptions}
+            payrollFilters={payrollFilters}
+            setPayrollFilters={setPayrollFilters}
+            chartMode={chartMode}
+            setChartMode={setChartMode}
+            excelRows={excelRows}
+            excelFileName={excelFileName}
+            onUploadExcel={handleUploadExcel}
+            accountMode={account?.mode}
+          />
+        ) : null}
+      </main>
     </div>
   );
 }

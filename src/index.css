@@ -2,22 +2,22 @@
 
 :root {
   color-scheme: light;
-  --accent: #9f1fef;
-  --accent-strong: #7f08ca;
-  --canvas: #f7f2ff;
+  --accent: #9f1fee;
+  --accent-strong: #a41c82;
+  --canvas: #ece7f6;
   --surface: rgba(255, 255, 255, 0.92);
-  --border-soft: rgba(159, 31, 239, 0.14);
-  --text-strong: #231131;
-  --text-muted: #6f6080;
-  --shadow-soft: 0 24px 60px rgba(61, 16, 97, 0.08);
+  --border-soft: rgba(159, 147, 231, 0.24);
+  --text-strong: #1a1b1d;
+  --text-muted: #898989;
+  --shadow-soft: 0 24px 60px rgba(26, 27, 29, 0.08);
   font-family: "Manrope", sans-serif;
   line-height: 1.5;
   font-weight: 500;
   color: var(--text-strong);
   background:
-    radial-gradient(circle at top left, rgba(159, 31, 239, 0.14), transparent 28%),
-    radial-gradient(circle at top right, rgba(159, 31, 239, 0.08), transparent 18%),
-    linear-gradient(180deg, #ffffff 0%, #fbf8ff 58%, #f5efff 100%);
+    radial-gradient(circle at top left, rgba(159, 31, 238, 0.14), transparent 28%),
+    radial-gradient(circle at top right, rgba(164, 28, 130, 0.08), transparent 22%),
+    linear-gradient(180deg, #ffffff 0%, #f7f4f3 52%, #ece7f6 100%);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -44,8 +44,8 @@ body::before {
   inset: 0;
   pointer-events: none;
   background-image:
-    linear-gradient(rgba(159, 31, 239, 0.03) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(159, 31, 239, 0.03) 1px, transparent 1px);
+    linear-gradient(rgba(159, 147, 231, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(159, 147, 231, 0.05) 1px, transparent 1px);
   background-size: 48px 48px;
   mask-image: radial-gradient(circle at center, rgba(0, 0, 0, 0.9), transparent 88%);
 }
