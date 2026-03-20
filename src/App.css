@@ -164,7 +164,7 @@ textarea:focus {
 
 .dashboard-shell {
   display: grid;
-  grid-template-columns: 290px minmax(0, 1fr);
+  grid-template-columns: 256px minmax(0, 1fr);
   min-height: 100vh;
   background: linear-gradient(135deg, rgba(220, 215, 212, 0.28), rgba(255, 255, 255, 0.8));
 }
@@ -173,7 +173,7 @@ textarea:focus {
   display: flex;
   flex-direction: column;
   justify-content: space-between;
-  padding: 28px 22px;
+  padding: 24px 18px;
   background:
     radial-gradient(circle at top, rgba(159, 31, 238, 0.22), transparent 34%),
     linear-gradient(180deg, #1a1b1d 0%, #242529 100%);
@@ -185,7 +185,7 @@ textarea:focus {
   display: flex;
   align-items: center;
   gap: 16px;
-  margin-bottom: 26px;
+  margin-bottom: 18px;
 }
 
 .sidebar-brand h1 {
@@ -197,16 +197,17 @@ textarea:focus {
 .sidebar-nav {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 6px;
 }
 
 .sidebar-link {
-  min-height: 48px;
-  padding: 0 16px;
-  border-radius: 18px;
+  min-height: 42px;
+  padding: 0 14px;
+  border-radius: 14px;
   text-align: left;
   color: #dcd7d4;
   border: 1px solid transparent;
+  font-size: 0.95rem;
 }
 
 .sidebar-link.active {
@@ -349,10 +350,6 @@ textarea:focus {
 
 .content-grid.narrow {
   grid-template-columns: 1.1fr 0.9fr;
-}
-
-.content-grid.schedule {
-  grid-template-columns: 1.5fr 0.9fr;
 }
 
 .span-two {
@@ -519,6 +516,11 @@ textarea:focus {
   text-align: left;
 }
 
+.schedule-cell.active {
+  border-color: rgba(159, 31, 238, 0.42);
+  box-shadow: inset 0 0 0 1px rgba(159, 31, 238, 0.18), 0 16px 30px rgba(159, 31, 238, 0.12);
+}
+
 .schedule-hours {
   color: #3c3e44;
   font-weight: 600;
@@ -575,6 +577,22 @@ textarea:focus {
 .status-badge.pendiente {
   background: rgba(137, 137, 137, 0.14);
   color: #5a5b60;
+}
+
+.schedule-detail-shell {
+  margin-top: 18px;
+}
+
+.schedule-detail-card {
+  padding: 18px;
+  border-radius: 22px;
+  border: 1px solid rgba(159, 31, 238, 0.16);
+  background: linear-gradient(180deg, rgba(159, 147, 231, 0.12), rgba(255, 255, 255, 0.96));
+}
+
+.card-heading.compact {
+  margin-bottom: 14px;
+  align-items: center;
 }
 
 .segmented-control {
@@ -659,7 +677,6 @@ th {
 @media (max-width: 1120px) {
   .section-grid,
   .content-grid,
-  .content-grid.schedule,
   .content-grid.narrow,
   .form-grid {
     grid-template-columns: 1fr;

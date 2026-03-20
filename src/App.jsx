@@ -139,7 +139,7 @@ function ChartCard({ title, subtitle, data, formatter, tone = "violet" }) {
   );
 }
 
-function ScheduleCell({ employee, day, data, onSelect }) {
+function ScheduleCell({ employee, day, data, onSelect, isActive }) {
   const state = getAttendanceState(employee, day.date, data);
   const shiftLabel =
     state.shiftBlocks.length > 0
@@ -147,7 +147,7 @@ function ScheduleCell({ employee, day, data, onSelect }) {
       : "Descanso";
 
   return (
-    <button className={`schedule-cell ${state.status}`} onClick={onSelect}>
+    <button className={`schedule-cell ${state.status} ${isActive ? "active" : ""}`} onClick={onSelect}>
       <span className="schedule-hours">{shiftLabel}</span>
       <StatusBadge status={state.status} label={state.label} />
     </button>
@@ -451,20 +451,27 @@ function ScheduleView({
   data,
   employees,
   scheduleView,
+  selectedDetail,
   attendanceForm,
   setAttendanceForm,
   onSelectControl,
   onSaveAttendance,
   onQuickClockIn,
 }) {
+  const detailEmployee =
+    employees.find((employee) => employee.id === selectedDetail.employeeId) || null;
+  const detailState =
+    detailEmployee && selectedDetail.date
+      ? getAttendanceState(detailEmployee, selectedDetail.date, data)
+      : null;
+
   return (
     <section className="module-shell">
-      <div className="content-grid schedule">
-        <article className="panel-card span-two">
+      <article className="panel-card">
           <div className="card-heading">
             <div>
               <h3>Horario empresarial semanal</h3>
-              <p>Vista operativa del equipo con control de faltas y atrasos.</p>
+              <p>Haz clic sobre cualquier día para expandir su control dentro de esta misma vista.</p>
             </div>
           </div>
 
@@ -488,103 +495,101 @@ function ScheduleView({
                     employee={row.employee}
                     day={day}
                     data={data}
+                    isActive={
+                      selectedDetail.employeeId === row.employee.id &&
+                      selectedDetail.date === day.date
+                    }
                     onSelect={() => onSelectControl(row.employee, day.date)}
                   />
                 ))}
               </div>
             ))}
           </div>
-        </article>
 
-        <article className="panel-card">
-          <div className="card-heading">
-            <div>
-              <h3>Control de asistencia</h3>
-              <p>Autoriza ingreso, justifica faltas o marca ausencia.</p>
-            </div>
+          <div className="schedule-detail-shell">
+            {detailEmployee && selectedDetail.date ? (
+              <div className="schedule-detail-card">
+                <div className="card-heading compact">
+                  <div>
+                    <h3>Control del día seleccionado</h3>
+                    <p>
+                      {detailEmployee.name} · {detailEmployee.position} · {selectedDetail.date}
+                    </p>
+                  </div>
+                  {detailState ? (
+                    <StatusBadge status={detailState.status} label={detailState.label} />
+                  ) : null}
+                </div>
+
+                <form className="form-layout" onSubmit={onSaveAttendance}>
+                  <div className="form-grid">
+                    <label>
+                      Empleado
+                      <input value={detailEmployee.name} readOnly />
+                    </label>
+                    <label>
+                      Fecha
+                      <input type="date" value={attendanceForm.date} readOnly />
+                    </label>
+                    <label>
+                      Hora de ingreso
+                      <input
+                        type="time"
+                        value={attendanceForm.clockIn}
+                        onChange={(event) =>
+                          setAttendanceForm((current) => ({
+                            ...current,
+                            clockIn: event.target.value,
+                          }))
+                        }
+                      />
+                    </label>
+                    <label>
+                      Tipo de falta
+                      <select
+                        value={attendanceForm.absenceType}
+                        onChange={(event) =>
+                          setAttendanceForm((current) => ({
+                            ...current,
+                            absenceType: event.target.value,
+                          }))
+                        }
+                      >
+                        <option value="">Sin falta</option>
+                        <option value="justificada">Falta justificada</option>
+                        <option value="no_justificada">Falta no justificada</option>
+                      </select>
+                    </label>
+                  </div>
+
+                  <label>
+                    Observación
+                    <textarea
+                      rows="4"
+                      value={attendanceForm.notes}
+                      onChange={(event) =>
+                        setAttendanceForm((current) => ({ ...current, notes: event.target.value }))
+                      }
+                    />
+                  </label>
+
+                  <div className="button-group">
+                    <button className="primary-button" type="submit">
+                      Guardar control
+                    </button>
+                    <button className="soft-button" type="button" onClick={onQuickClockIn}>
+                      Marcar ingreso ahora
+                    </button>
+                  </div>
+                </form>
+              </div>
+            ) : (
+              <div className="empty-card">
+                <p>Selecciona un día del horario para expandir su detalle y controlarlo aquí.</p>
+              </div>
+            )}
           </div>
-
-          <form className="form-layout" onSubmit={onSaveAttendance}>
-            <div className="form-grid">
-              <label>
-                Empleado
-                <select
-                  value={attendanceForm.employeeId}
-                  onChange={(event) =>
-                    setAttendanceForm((current) => ({
-                      ...current,
-                      employeeId: event.target.value,
-                    }))
-                  }
-                >
-                  <option value="">Selecciona</option>
-                  {employees.map((employee) => (
-                    <option key={employee.id} value={employee.id}>
-                      {employee.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Fecha
-                <input
-                  type="date"
-                  value={attendanceForm.date}
-                  onChange={(event) =>
-                    setAttendanceForm((current) => ({ ...current, date: event.target.value }))
-                  }
-                />
-              </label>
-              <label>
-                Hora de ingreso
-                <input
-                  type="time"
-                  value={attendanceForm.clockIn}
-                  onChange={(event) =>
-                    setAttendanceForm((current) => ({ ...current, clockIn: event.target.value }))
-                  }
-                />
-              </label>
-              <label>
-                Tipo de falta
-                <select
-                  value={attendanceForm.absenceType}
-                  onChange={(event) =>
-                    setAttendanceForm((current) => ({
-                      ...current,
-                      absenceType: event.target.value,
-                    }))
-                  }
-                >
-                  <option value="">Sin falta</option>
-                  <option value="justificada">Falta justificada</option>
-                  <option value="no_justificada">Falta no justificada</option>
-                </select>
-              </label>
-            </div>
-
-            <label>
-              Observación
-              <textarea
-                rows="4"
-                value={attendanceForm.notes}
-                onChange={(event) =>
-                  setAttendanceForm((current) => ({ ...current, notes: event.target.value }))
-                }
-              />
-            </label>
-
-            <div className="button-group">
-              <button className="primary-button" type="submit">
-                Guardar control
-              </button>
-              <button className="soft-button" type="button" onClick={onQuickClockIn}>
-                Marcar ingreso ahora
-              </button>
-            </div>
-          </form>
-        </article>
-      </div>
+      </article>
     </section>
   );
 }
@@ -874,6 +879,10 @@ function App() {
     absenceType: "",
     notes: "",
   });
+  const [selectedScheduleDetail, setSelectedScheduleDetail] = useState({
+    employeeId: "",
+    date: "",
+  });
   const [payrollFilters, setPayrollFilters] = useState({
     year: "2026",
     monthKey: "",
@@ -938,6 +947,10 @@ function App() {
       absenceType: "",
       notes: "",
     });
+    setSelectedScheduleDetail({
+      employeeId: "",
+      date: "",
+    });
   }
 
   function handleLogout() {
@@ -998,6 +1011,10 @@ function App() {
       (entry) => entry.employeeId === employee.id && entry.date === date,
     );
 
+    setSelectedScheduleDetail({
+      employeeId: employee.id,
+      date,
+    });
     setAttendanceForm({
       employeeId: employee.id,
       date,
@@ -1188,6 +1205,7 @@ function App() {
             data={data}
             employees={employees.filter((employee) => employee.status !== "Vacante")}
             scheduleView={scheduleView}
+            selectedDetail={selectedScheduleDetail}
             attendanceForm={attendanceForm}
             setAttendanceForm={setAttendanceForm}
             onSelectControl={handleSelectAttendance}
