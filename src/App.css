@@ -164,16 +164,13 @@ textarea:focus {
 
 .dashboard-shell {
   display: grid;
-  grid-template-columns: 256px minmax(0, 1fr);
+  grid-template-columns: 236px minmax(0, 1fr);
   min-height: 100vh;
   background: linear-gradient(135deg, rgba(220, 215, 212, 0.28), rgba(255, 255, 255, 0.8));
 }
 
 .sidebar {
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  padding: 24px 18px;
+  padding: 18px 14px;
   background:
     radial-gradient(circle at top, rgba(159, 31, 238, 0.22), transparent 34%),
     linear-gradient(180deg, #1a1b1d 0%, #242529 100%);
@@ -181,33 +178,47 @@ textarea:focus {
   border-right: 1px solid rgba(159, 147, 231, 0.16);
 }
 
+.sidebar-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+}
+
+.sidebar-logo {
+  width: 72px;
+  height: 72px;
+  border-radius: 22px;
+}
+
 .sidebar-brand {
   display: flex;
   align-items: center;
-  gap: 16px;
-  margin-bottom: 18px;
+  gap: 12px;
+  margin-bottom: 2px;
 }
 
 .sidebar-brand h1 {
   margin: 0;
-  font-size: 1.6rem;
+  font-size: 1.45rem;
   color: #ffffff;
+  line-height: 1;
 }
 
 .sidebar-nav {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
 }
 
 .sidebar-link {
-  min-height: 42px;
-  padding: 0 14px;
-  border-radius: 14px;
+  min-height: 38px;
+  padding: 0 12px;
+  border-radius: 12px;
   text-align: left;
   color: #dcd7d4;
   border: 1px solid transparent;
-  font-size: 0.95rem;
+  font-size: 0.91rem;
 }
 
 .sidebar-link.active {
@@ -219,14 +230,26 @@ textarea:focus {
 .sidebar-footer {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 8px;
+  margin-top: 4px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(159, 147, 231, 0.14);
+}
+
+.sidebar-footer small {
+  color: rgba(220, 215, 212, 0.72);
+  line-height: 1.2;
+}
+
+.sidebar-footer .soft-button {
+  min-height: 40px;
 }
 
 .account-pill {
   width: fit-content;
-  padding: 8px 12px;
+  padding: 7px 10px;
   border-radius: 999px;
-  font-size: 0.86rem;
+  font-size: 0.8rem;
   font-weight: 700;
 }
 

@@ -1132,34 +1132,36 @@ function App() {
   return (
     <div className="dashboard-shell">
       <aside className="sidebar">
-        <div className="sidebar-brand">
-          <img src="/branding/logoIOS.png" alt={`Logo ${BRAND_NAME}`} className="sidebar-logo" />
-          <div>
-            <p className="eyebrow">Plan software dashboard</p>
-            <h1>{BRAND_NAME}</h1>
+        <div className="sidebar-stack">
+          <div className="sidebar-brand">
+            <img src="/branding/logoIOS.png" alt={`Logo ${BRAND_NAME}`} className="sidebar-logo" />
+            <div>
+              <p className="eyebrow">Plan software dashboard</p>
+              <h1>{BRAND_NAME}</h1>
+            </div>
           </div>
-        </div>
 
-        <nav className="sidebar-nav">
-          {NAV_ITEMS.map((item) => (
-            <button
-              key={item.id}
-              className={`sidebar-link ${activeView === item.id ? "active" : ""}`}
-              onClick={() => setActiveView(item.id)}
-            >
-              {item.label}
+          <nav className="sidebar-nav">
+            {NAV_ITEMS.map((item) => (
+              <button
+                key={item.id}
+                className={`sidebar-link ${activeView === item.id ? "active" : ""}`}
+                onClick={() => setActiveView(item.id)}
+              >
+                {item.label}
+              </button>
+            ))}
+          </nav>
+
+          <div className="sidebar-footer">
+            <span className={`account-pill ${account?.mode || "admin"}`}>
+              {account?.mode === "demo" ? "Entorno demo" : "Entorno admin"}
+            </span>
+            <small>{session.email}</small>
+            <button className="soft-button wide" onClick={handleLogout}>
+              Cerrar sesión
             </button>
-          ))}
-        </nav>
-
-        <div className="sidebar-footer">
-          <span className={`account-pill ${account?.mode || "admin"}`}>
-            {account?.mode === "demo" ? "Entorno demo" : "Entorno admin"}
-          </span>
-          <small>{session.email}</small>
-          <button className="soft-button wide" onClick={handleLogout}>
-            Cerrar sesión
-          </button>
+          </div>
         </div>
       </aside>
 
