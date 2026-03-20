@@ -43,6 +43,25 @@ export const DAY_LABELS = {
   domingo: "Dom",
 };
 
+export const MANUAL_OVERTIME_TYPES = {
+  extra_diurna: {
+    label: "Hora extra diurna",
+    multiplier: 1.25,
+  },
+  extra_nocturna: {
+    label: "Hora extra nocturna",
+    multiplier: 1.75,
+  },
+  dominical: {
+    label: "Hora dominical",
+    multiplier: 1.75,
+  },
+  festiva: {
+    label: "Hora festiva",
+    multiplier: 2,
+  },
+};
+
 export const SHIFT_LIBRARY = {
   general: {
     label: "Operación completa",
@@ -117,6 +136,10 @@ const CURRENT_WEEK = [
 ];
 
 let sequence = 0;
+
+function ensureArray(value) {
+  return Array.isArray(value) ? value : [];
+}
 
 function createId(prefix) {
   sequence += 1;
@@ -309,6 +332,11 @@ function getShiftForDay(employee, dayKey) {
   return shift.blocks[dayKey] || [];
 }
 
+export function getRegularShiftBlocksForDate(employee, date) {
+  const weekDay = CURRENT_WEEK.find((item) => item.date === date);
+  return weekDay ? getShiftForDay(employee, weekDay.key) : [];
+}
+
 function buildDemoAttendance(employees) {
   const employeeMap = Object.fromEntries(employees.map((employee) => [employee.name, employee]));
 
@@ -446,6 +474,20 @@ function buildDemoExcelRows(employees, payrollRecords) {
     });
 }
 
+function normalizeDataShape(rawData = {}) {
+  return {
+    ...createEmptyState(),
+    ...rawData,
+    employees: ensureArray(rawData.employees),
+    attendance: ensureArray(rawData.attendance),
+    payrollRecords: ensureArray(rawData.payrollRecords),
+    excelRows: ensureArray(rawData.excelRows),
+    uploadedExcelRows: ensureArray(rawData.uploadedExcelRows),
+    manualOvertimeEntries: ensureArray(rawData.manualOvertimeEntries),
+    specialSchedules: ensureArray(rawData.specialSchedules),
+  };
+}
+
 export function createEmptyState() {
   return {
     employees: [],
@@ -453,6 +495,8 @@ export function createEmptyState() {
     payrollRecords: [],
     excelRows: [],
     uploadedExcelRows: [],
+    manualOvertimeEntries: [],
+    specialSchedules: [],
   };
 }
 
@@ -492,7 +536,7 @@ export function loadAccountData(accountEmail) {
     const raw = window.localStorage.getItem(storageKey);
 
     if (raw) {
-      return JSON.parse(raw);
+      return normalizeDataShape(JSON.parse(raw));
     }
   } catch {
     return createEmptyState();
@@ -585,6 +629,94 @@ export function upsertAttendance(data, payload) {
   return nextData;
 }
 
+export function upsertManualOvertime(data, payload) {
+  const nextData = deepClone(data);
+  nextData.manualOvertimeEntries = ensureArray(nextData.manualOvertimeEntries);
+
+  const current = nextData.manualOvertimeEntries.find(
+    (entry) =>
+      entry.id === payload.id ||
+      (entry.employeeId === payload.employeeId &&
+        entry.date === payload.date &&
+        entry.overtimeType === payload.overtimeType),
+  );
+
+  if (Number(payload.hours || 0) <= 0) {
+    nextData.manualOvertimeEntries = nextData.manualOvertimeEntries.filter(
+      (entry) => entry.id !== current?.id,
+    );
+    return nextData;
+  }
+
+  const normalizedPayload = {
+    id: current?.id || createId("mhe"),
+    employeeId: payload.employeeId,
+    date: payload.date,
+    overtimeType: payload.overtimeType,
+    hours: round(Number(payload.hours || 0), 1),
+    notes: payload.notes || "",
+  };
+
+  if (current) {
+    Object.assign(current, normalizedPayload);
+    return nextData;
+  }
+
+  nextData.manualOvertimeEntries.push(normalizedPayload);
+  return nextData;
+}
+
+export function deleteManualOvertimeEntry(data, entryId) {
+  const nextData = deepClone(data);
+  nextData.manualOvertimeEntries = ensureArray(nextData.manualOvertimeEntries).filter(
+    (entry) => entry.id !== entryId,
+  );
+  return nextData;
+}
+
+export function upsertSpecialSchedule(data, payload) {
+  const nextData = deepClone(data);
+  nextData.specialSchedules = ensureArray(nextData.specialSchedules);
+  const current = nextData.specialSchedules.find(
+    (entry) => entry.employeeId === payload.employeeId && entry.date === payload.date,
+  );
+
+  const normalizedPayload = {
+    id: current?.id || createId("spc"),
+    employeeId: payload.employeeId,
+    date: payload.date,
+    mode: payload.mode || "custom",
+    blocks: ensureArray(payload.blocks)
+      .filter(
+        (block) =>
+          block.start &&
+          block.end &&
+          timeToMinutes(block.end) > timeToMinutes(block.start),
+      )
+      .map((block) => ({
+        start: block.start,
+        end: block.end,
+      })),
+    notes: payload.notes || "",
+  };
+
+  if (current) {
+    Object.assign(current, normalizedPayload);
+    return nextData;
+  }
+
+  nextData.specialSchedules.push(normalizedPayload);
+  return nextData;
+}
+
+export function deleteSpecialSchedule(data, employeeId, date) {
+  const nextData = deepClone(data);
+  nextData.specialSchedules = ensureArray(nextData.specialSchedules).filter(
+    (entry) => !(entry.employeeId === employeeId && entry.date === date),
+  );
+  return nextData;
+}
+
 export function setUploadedExcelRows(data, rows) {
   return {
     ...deepClone(data),
@@ -615,16 +747,115 @@ function groupBy(records, keyBuilder, valueBuilder) {
     .sort((left, right) => right.value - left.value);
 }
 
+function getMonthMeta(monthKey) {
+  return MONTHS.find((month) => month.key === monthKey) || { key: monthKey, label: monthKey };
+}
+
+function buildPayrollDataset(data) {
+  const records = ensureArray(data.payrollRecords).map((record) => ({ ...record }));
+  const recordMap = new Map(
+    records.map((record, index) => [`${record.employeeId}:${record.monthKey}`, index]),
+  );
+
+  ensureArray(data.manualOvertimeEntries).forEach((entry) => {
+    const employee = data.employees.find((item) => item.id === entry.employeeId);
+
+    if (!employee) {
+      return;
+    }
+
+    const monthKey = String(entry.date || "").slice(0, 7);
+    const monthMeta = getMonthMeta(monthKey);
+    const overtimeValue = getManualOvertimeValue(employee, entry);
+    const recordKey = `${entry.employeeId}:${monthKey}`;
+
+    if (!recordMap.has(recordKey)) {
+      const virtualRecord = {
+        id: `manual_${recordKey}`,
+        employeeId: employee.id,
+        monthKey,
+        monthLabel: monthMeta.label,
+        year: monthKey.slice(0, 4),
+        month: monthKey.slice(5, 7),
+        position: employee.position,
+        shiftLabel: SHIFT_LIBRARY[employee.shiftId]?.label || "Turno",
+        salaryBase: employee.salaryBase,
+        expectedHours: round(getMonthlyHours(employee.weeklyHours), 1),
+        workedHours: round(getMonthlyHours(employee.weeklyHours), 1),
+        lostHours: 0,
+        overtimeHours: 0,
+        nightHours: 0,
+        lateHours: 0,
+        justifiedAbsences: 0,
+        unjustifiedAbsences: 0,
+        overtimeValue: 0,
+        nightSurchargeValue: 0,
+        finalResult: employee.salaryBase,
+      };
+
+      recordMap.set(recordKey, records.length);
+      records.push(virtualRecord);
+    }
+
+    const currentRecord = records[recordMap.get(recordKey)];
+    currentRecord.overtimeHours = round(Number(currentRecord.overtimeHours || 0) + Number(entry.hours || 0), 1);
+    currentRecord.workedHours = round(Number(currentRecord.workedHours || 0) + Number(entry.hours || 0), 1);
+    currentRecord.overtimeValue = round(Number(currentRecord.overtimeValue || 0) + overtimeValue, 0);
+    currentRecord.finalResult = round(Number(currentRecord.finalResult || 0) + overtimeValue, 0);
+  });
+
+  return records;
+}
+
 export function getShiftBlocks(employee, dayKey) {
   return getShiftForDay(employee, dayKey);
 }
 
+export function getSpecialSchedule(data, employeeId, date) {
+  return (
+    ensureArray(data.specialSchedules).find(
+      (entry) => entry.employeeId === employeeId && entry.date === date,
+    ) || null
+  );
+}
+
+export function getShiftBlocksForDate(employee, date, data) {
+  const specialSchedule = getSpecialSchedule(data, employee.id, date);
+
+  if (specialSchedule) {
+    return specialSchedule.blocks || [];
+  }
+
+  return getRegularShiftBlocksForDate(employee, date);
+}
+
+function getManualOvertimeValue(employee, entry) {
+  const overtimeType = MANUAL_OVERTIME_TYPES[entry.overtimeType] || MANUAL_OVERTIME_TYPES.extra_diurna;
+  return round(Number(entry.hours || 0) * Number(employee.hourlyValue || 0) * overtimeType.multiplier, 0);
+}
+
+export function getManualOvertimeEntriesForDate(data, employeeId, date) {
+  return ensureArray(data.manualOvertimeEntries).filter(
+    (entry) => entry.employeeId === employeeId && entry.date === date,
+  );
+}
+
+export function getManualOvertimeSummaryForDate(data, employee, date) {
+  const entries = getManualOvertimeEntriesForDate(data, employee.id, date);
+
+  return {
+    entries,
+    hours: round(entries.reduce((total, entry) => total + Number(entry.hours || 0), 0), 1),
+    value: round(entries.reduce((total, entry) => total + getManualOvertimeValue(employee, entry), 0), 0),
+  };
+}
+
 export function getAttendanceState(employee, date, data) {
-  const weekDay = CURRENT_WEEK.find((item) => item.date === date)?.key;
-  const shiftBlocks = weekDay ? getShiftForDay(employee, weekDay) : [];
+  const shiftBlocks = getShiftBlocksForDate(employee, date, data);
   const attendance = data.attendance.find(
     (entry) => entry.employeeId === employee.id && entry.date === date,
   );
+  const specialSchedule = getSpecialSchedule(data, employee.id, date);
 
   if (!shiftBlocks.length) {
     return {
@@ -633,6 +864,7 @@ export function getAttendanceState(employee, date, data) {
       lateHours: 0,
       shiftBlocks,
       attendance,
+      hasSpecialSchedule: Boolean(specialSchedule),
     };
   }
 
@@ -647,6 +879,7 @@ export function getAttendanceState(employee, date, data) {
       lateHours: 0,
       shiftBlocks,
       attendance,
+      hasSpecialSchedule: Boolean(specialSchedule),
     };
   }
 
@@ -657,6 +890,7 @@ export function getAttendanceState(employee, date, data) {
       lateHours: 0,
       shiftBlocks,
       attendance,
+      hasSpecialSchedule: Boolean(specialSchedule),
     };
   }
 
@@ -668,6 +902,7 @@ export function getAttendanceState(employee, date, data) {
       lateHours,
       shiftBlocks,
       attendance,
+      hasSpecialSchedule: Boolean(specialSchedule),
     };
   }
 
@@ -678,6 +913,7 @@ export function getAttendanceState(employee, date, data) {
       lateHours: 0,
       shiftBlocks,
       attendance,
+      hasSpecialSchedule: Boolean(specialSchedule),
     };
   }
 
@@ -689,6 +925,7 @@ export function getAttendanceState(employee, date, data) {
       lateHours,
       shiftBlocks,
       attendance,
+      hasSpecialSchedule: Boolean(specialSchedule),
     };
   }
 
@@ -698,6 +935,7 @@ export function getAttendanceState(employee, date, data) {
     lateHours: 0,
     shiftBlocks,
     attendance,
+    hasSpecialSchedule: Boolean(specialSchedule),
   };
 }
 
@@ -730,15 +968,17 @@ export function getCurrentOperationsStats(data) {
 }
 
 export function getPayrollFiltersOptions(data) {
+  const records = buildPayrollDataset(data);
+
   return {
-    years: [...new Set(data.payrollRecords.map((record) => record.year))],
+    years: [...new Set(records.map((record) => record.year))],
     months: MONTHS,
     positions: [...new Set(data.employees.map((employee) => employee.position).filter(Boolean))],
   };
 }
 
 export function filterPayrollRecords(data, filters) {
-  return data.payrollRecords.filter((record) => {
+  return buildPayrollDataset(data).filter((record) => {
     if (filters.year && record.year !== filters.year) {
       return false;
     }

@@ -5,23 +5,32 @@ import {
   CURRENT_TIME,
   DAY_LABELS,
   LOGIN_ACCOUNTS,
+  MANUAL_OVERTIME_TYPES,
   NAV_ITEMS,
   SHIFT_LIBRARY,
   TODAY,
   createEmployeeDraft,
+  deleteManualOvertimeEntry,
+  deleteSpecialSchedule,
   deleteEmployee,
   getAccountByCredentials,
   getAttendanceState,
   getCurrentOperationsStats,
   getExcelRows,
+  getManualOvertimeEntriesForDate,
+  getManualOvertimeSummaryForDate,
   getPayrollDashboard,
   getPayrollFiltersOptions,
+  getRegularShiftBlocksForDate,
   getScheduleWeekView,
+  getSpecialSchedule,
   loadAccountData,
   saveAccountData,
   setUploadedExcelRows,
   upsertAttendance,
+  upsertManualOvertime,
   upsertEmployee,
+  upsertSpecialSchedule,
 } from "./lib/dashboardData";
 
 const STORAGE_KEYS = {
@@ -43,6 +52,32 @@ function formatNumber(value, digits = 1) {
     maximumFractionDigits: digits,
     minimumFractionDigits: digits,
   }).format(Number(value || 0));
+}
+
+function createManualOvertimeDraft(employeeId = "", date = TODAY) {
+  return {
+    id: "",
+    employeeId,
+    date,
+    overtimeType: "extra_diurna",
+    hours: "",
+    notes: "",
+  };
+}
+
+function createSpecialScheduleDraft(employeeId = "", date = TODAY, blocks = [], notes = "", mode = "") {
+  const [firstBlock = {}, secondBlock = {}] = blocks;
+
+  return {
+    employeeId,
+    date,
+    mode: mode || (blocks.length ? "custom" : "rest"),
+    start1: firstBlock.start || "",
+    end1: firstBlock.end || "",
+    start2: secondBlock.start || "",
+    end2: secondBlock.end || "",
+    notes,
+  };
 }
 
 function loadSession() {
@@ -141,6 +176,7 @@ function ChartCard({ title, subtitle, data, formatter, tone = "violet" }) {
 
 function ScheduleCell({ employee, day, data, onSelect, isActive }) {
   const state = getAttendanceState(employee, day.date, data);
+  const overtimeSummary = getManualOvertimeSummaryForDate(data, employee, day.date);
   const shiftLabel =
     state.shiftBlocks.length > 0
       ? state.shiftBlocks.map((block) => `${block.start} - ${block.end}`).join(" · ")
@@ -149,6 +185,12 @@ function ScheduleCell({ employee, day, data, onSelect, isActive }) {
   return (
     <button className={`schedule-cell ${state.status} ${isActive ? "active" : ""}`} onClick={onSelect}>
       <span className="schedule-hours">{shiftLabel}</span>
+      <div className="schedule-flags">
+        {state.hasSpecialSchedule ? <span className="schedule-flag">Horario especial</span> : null}
+        {overtimeSummary.hours > 0 ? (
+          <span className="schedule-flag strong">HE manual {formatNumber(overtimeSummary.hours)} h</span>
+        ) : null}
+      </div>
       <StatusBadge status={state.status} label={state.label} />
     </button>
   );
@@ -156,14 +198,16 @@ function ScheduleCell({ employee, day, data, onSelect, isActive }) {
 
 function createEmptyDataForSession(nextSession) {
   return nextSession?.isAuthenticated && nextSession.email
-    ? loadAccountData(nextSession.email)
-    : {
-        employees: [],
-        attendance: [],
-        payrollRecords: [],
-        excelRows: [],
-        uploadedExcelRows: [],
-      };
+      ? loadAccountData(nextSession.email)
+      : {
+          employees: [],
+          attendance: [],
+          payrollRecords: [],
+          excelRows: [],
+          uploadedExcelRows: [],
+          manualOvertimeEntries: [],
+          specialSchedules: [],
+        };
 }
 
 function DashboardView({ payrollView, operations, onChangeView }) {
@@ -454,15 +498,36 @@ function ScheduleView({
   selectedDetail,
   attendanceForm,
   setAttendanceForm,
+  manualOvertimeForm,
+  setManualOvertimeForm,
+  specialScheduleForm,
+  setSpecialScheduleForm,
   onSelectControl,
   onSaveAttendance,
   onQuickClockIn,
+  onSaveManualOvertime,
+  onEditManualOvertime,
+  onDeleteManualOvertime,
+  onSaveSpecialSchedule,
+  onClearSpecialSchedule,
 }) {
   const detailEmployee =
     employees.find((employee) => employee.id === selectedDetail.employeeId) || null;
   const detailState =
     detailEmployee && selectedDetail.date
       ? getAttendanceState(detailEmployee, selectedDetail.date, data)
+      : null;
+  const detailManualEntries =
+    detailEmployee && selectedDetail.date
+      ? getManualOvertimeEntriesForDate(data, detailEmployee.id, selectedDetail.date)
+      : [];
+  const detailManualSummary =
+    detailEmployee && selectedDetail.date
+      ? getManualOvertimeSummaryForDate(data, detailEmployee, selectedDetail.date)
+      : { hours: 0, value: 0 };
+  const detailSpecialSchedule =
+    detailEmployee && selectedDetail.date
+      ? getSpecialSchedule(data, detailEmployee.id, selectedDetail.date)
       : null;
 
   return (
@@ -508,6 +573,36 @@ function ScheduleView({
 
           <div className="schedule-detail-shell">
             {detailEmployee && selectedDetail.date ? (
+              <>
+                <div className="schedule-detail-summary">
+                  <div>
+                    <span className="metric-label">Empleado seleccionado</span>
+                    <strong>{detailEmployee.name}</strong>
+                    <small>
+                      {detailEmployee.position} · {selectedDetail.date}
+                    </small>
+                  </div>
+                  <div>
+                    <span className="metric-label">Programación del día</span>
+                    <strong>
+                      {detailState?.shiftBlocks?.length
+                        ? detailState.shiftBlocks.map((block) => `${block.start} - ${block.end}`).join(" · ")
+                        : "Descanso"}
+                    </strong>
+                    <small>
+                      {detailSpecialSchedule ? "Agenda especial activa" : "Agenda base del turno"}
+                    </small>
+                  </div>
+                  <div>
+                    <span className="metric-label">Horas extra manuales</span>
+                    <strong>{formatNumber(detailManualSummary.hours)} h</strong>
+                    <small>{formatCurrency(detailManualSummary.value)}</small>
+                  </div>
+                  <div className="summary-badge-stack">
+                    {detailState ? <StatusBadge status={detailState.status} label={detailState.label} /> : null}
+                    {detailSpecialSchedule ? <span className="inline-notice">Horario especial</span> : null}
+                  </div>
+                </div>
               <div className="schedule-detail-card">
                 <div className="card-heading compact">
                   <div>
@@ -583,6 +678,222 @@ function ScheduleView({
                   </div>
                 </form>
               </div>
+              <div className="schedule-detail-grid">
+                <div className="schedule-detail-card">
+                  <div className="card-heading compact">
+                    <div>
+                      <h3>Horas extra manuales</h3>
+                      <p>Registra ajustes puntuales para este empleado y esta fecha.</p>
+                    </div>
+                  </div>
+
+                  <form className="form-layout" onSubmit={onSaveManualOvertime}>
+                    <div className="form-grid">
+                      <label>
+                        Tipo
+                        <select
+                          value={manualOvertimeForm.overtimeType}
+                          onChange={(event) =>
+                            setManualOvertimeForm((current) => ({
+                              ...current,
+                              overtimeType: event.target.value,
+                            }))
+                          }
+                        >
+                          {Object.entries(MANUAL_OVERTIME_TYPES).map(([key, item]) => (
+                            <option key={key} value={key}>
+                              {item.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label>
+                        Horas
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.5"
+                          value={manualOvertimeForm.hours}
+                          onChange={(event) =>
+                            setManualOvertimeForm((current) => ({
+                              ...current,
+                              hours: event.target.value,
+                            }))
+                          }
+                        />
+                      </label>
+                    </div>
+
+                    <label>
+                      Observación
+                      <textarea
+                        rows="3"
+                        value={manualOvertimeForm.notes}
+                        onChange={(event) =>
+                          setManualOvertimeForm((current) => ({ ...current, notes: event.target.value }))
+                        }
+                      />
+                    </label>
+
+                    <div className="button-group">
+                      <button className="primary-button" type="submit">
+                        Guardar horas extra
+                      </button>
+                      {manualOvertimeForm.id ? (
+                        <button className="soft-button danger" type="button" onClick={onDeleteManualOvertime}>
+                          Eliminar registro
+                        </button>
+                      ) : null}
+                    </div>
+                  </form>
+
+                  <div className="stack-list compact">
+                    {detailManualEntries.length ? (
+                      detailManualEntries.map((entry) => (
+                        <button
+                          key={entry.id}
+                          className={`stack-row ${manualOvertimeForm.id === entry.id ? "active" : ""}`}
+                          type="button"
+                          onClick={() => onEditManualOvertime(entry)}
+                        >
+                          <div>
+                            <strong>
+                              {MANUAL_OVERTIME_TYPES[entry.overtimeType]?.label || "Horas extra"}
+                            </strong>
+                            <span>{entry.notes || "Sin observación."}</span>
+                          </div>
+                          <div>
+                            <strong>{formatNumber(entry.hours)} h</strong>
+                            <span>
+                              {formatCurrency(
+                                detailEmployee.hourlyValue *
+                                  entry.hours *
+                                  (MANUAL_OVERTIME_TYPES[entry.overtimeType]?.multiplier || 1),
+                              )}
+                            </span>
+                          </div>
+                        </button>
+                      ))
+                    ) : (
+                      <div className="empty-card mini">
+                        <p>No hay horas extra manuales cargadas para esta fecha.</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="schedule-detail-card">
+                  <div className="card-heading compact">
+                    <div>
+                      <h3>Horario especial</h3>
+                      <p>Crea una agenda excepcional para este día dentro del calendario.</p>
+                    </div>
+                  </div>
+
+                  <form className="form-layout" onSubmit={onSaveSpecialSchedule}>
+                    <label>
+                      Tipo de agenda
+                      <select
+                        value={specialScheduleForm.mode}
+                        onChange={(event) =>
+                          setSpecialScheduleForm((current) => ({
+                            ...current,
+                            mode: event.target.value,
+                          }))
+                        }
+                      >
+                        <option value="custom">Horario especial</option>
+                        <option value="rest">Descanso especial</option>
+                      </select>
+                    </label>
+
+                    {specialScheduleForm.mode === "custom" ? (
+                      <div className="form-grid">
+                        <label>
+                          Inicio bloque 1
+                          <input
+                            type="time"
+                            value={specialScheduleForm.start1}
+                            onChange={(event) =>
+                              setSpecialScheduleForm((current) => ({
+                                ...current,
+                                start1: event.target.value,
+                              }))
+                            }
+                          />
+                        </label>
+                        <label>
+                          Fin bloque 1
+                          <input
+                            type="time"
+                            value={specialScheduleForm.end1}
+                            onChange={(event) =>
+                              setSpecialScheduleForm((current) => ({
+                                ...current,
+                                end1: event.target.value,
+                              }))
+                            }
+                          />
+                        </label>
+                        <label>
+                          Inicio bloque 2
+                          <input
+                            type="time"
+                            value={specialScheduleForm.start2}
+                            onChange={(event) =>
+                              setSpecialScheduleForm((current) => ({
+                                ...current,
+                                start2: event.target.value,
+                              }))
+                            }
+                          />
+                        </label>
+                        <label>
+                          Fin bloque 2
+                          <input
+                            type="time"
+                            value={specialScheduleForm.end2}
+                            onChange={(event) =>
+                              setSpecialScheduleForm((current) => ({
+                                ...current,
+                                end2: event.target.value,
+                              }))
+                            }
+                          />
+                        </label>
+                      </div>
+                    ) : (
+                      <span className="inline-notice">La fecha quedará marcada como descanso especial.</span>
+                    )}
+
+                    <label>
+                      Observación
+                      <textarea
+                        rows="3"
+                        value={specialScheduleForm.notes}
+                        onChange={(event) =>
+                          setSpecialScheduleForm((current) => ({
+                            ...current,
+                            notes: event.target.value,
+                          }))
+                        }
+                      />
+                    </label>
+
+                    <div className="button-group">
+                      <button className="primary-button" type="submit">
+                        Guardar horario especial
+                      </button>
+                      {detailSpecialSchedule ? (
+                        <button className="soft-button" type="button" onClick={onClearSpecialSchedule}>
+                          Volver a agenda base
+                        </button>
+                      ) : null}
+                    </div>
+                  </form>
+                </div>
+              </div>
+              </>
             ) : (
               <div className="empty-card">
                 <p>Selecciona un día del horario para expandir su detalle y controlarlo aquí.</p>
@@ -879,6 +1190,8 @@ function App() {
     absenceType: "",
     notes: "",
   });
+  const [manualOvertimeForm, setManualOvertimeForm] = useState(() => createManualOvertimeDraft());
+  const [specialScheduleForm, setSpecialScheduleForm] = useState(() => createSpecialScheduleDraft());
   const [selectedScheduleDetail, setSelectedScheduleDetail] = useState({
     employeeId: "",
     date: "",
@@ -947,6 +1260,8 @@ function App() {
       absenceType: "",
       notes: "",
     });
+    setManualOvertimeForm(createManualOvertimeDraft());
+    setSpecialScheduleForm(createSpecialScheduleDraft());
     setSelectedScheduleDetail({
       employeeId: "",
       date: "",
@@ -958,6 +1273,8 @@ function App() {
     setData(createEmptyDataForSession(null));
     setLoginForm({ email: "", password: "" });
     setSelectedEmployeeId("");
+    setManualOvertimeForm(createManualOvertimeDraft());
+    setSpecialScheduleForm(createSpecialScheduleDraft());
   }
 
   function handleSelectEmployee(employee) {
@@ -1010,6 +1327,8 @@ function App() {
     const record = data.attendance.find(
       (entry) => entry.employeeId === employee.id && entry.date === date,
     );
+    const specialSchedule = getSpecialSchedule(data, employee.id, date);
+    const baseBlocks = specialSchedule?.blocks || getRegularShiftBlocksForDate(employee, date);
 
     setSelectedScheduleDetail({
       employeeId: employee.id,
@@ -1022,6 +1341,16 @@ function App() {
       absenceType: record?.absenceType || "",
       notes: record?.notes || "",
     });
+    setManualOvertimeForm(createManualOvertimeDraft(employee.id, date));
+    setSpecialScheduleForm(
+      createSpecialScheduleDraft(
+        employee.id,
+        date,
+        baseBlocks,
+        specialSchedule?.notes || "",
+        specialSchedule?.mode || "",
+      ),
+    );
   }
 
   function handleSaveAttendance(event) {
@@ -1060,6 +1389,106 @@ function App() {
       }),
     );
     showNotice("Ingreso autorizado correctamente.");
+  }
+
+  function handleEditManualOvertime(entry) {
+    setManualOvertimeForm({
+      id: entry.id,
+      employeeId: entry.employeeId,
+      date: entry.date,
+      overtimeType: entry.overtimeType,
+      hours: String(entry.hours ?? ""),
+      notes: entry.notes || "",
+    });
+  }
+
+  function handleSaveManualOvertime(event) {
+    event.preventDefault();
+
+    if (!manualOvertimeForm.employeeId) {
+      showNotice("Selecciona un empleado antes de registrar horas extra.");
+      return;
+    }
+
+    if (Number(manualOvertimeForm.hours || 0) <= 0) {
+      showNotice("Ingresa una cantidad de horas extra válida.");
+      return;
+    }
+
+    const nextData = upsertManualOvertime(data, {
+      ...manualOvertimeForm,
+      hours: Number(manualOvertimeForm.hours),
+    });
+
+    setData(nextData);
+    setManualOvertimeForm(createManualOvertimeDraft(manualOvertimeForm.employeeId, manualOvertimeForm.date));
+    showNotice("Horas extra manuales guardadas.");
+  }
+
+  function handleDeleteManualOvertime() {
+    if (!manualOvertimeForm.id) {
+      showNotice("Selecciona un registro de horas extra para eliminar.");
+      return;
+    }
+
+    setData(deleteManualOvertimeEntry(data, manualOvertimeForm.id));
+    setManualOvertimeForm(createManualOvertimeDraft(manualOvertimeForm.employeeId, manualOvertimeForm.date));
+    showNotice("Registro manual eliminado.");
+  }
+
+  function handleSaveSpecialSchedule(event) {
+    event.preventDefault();
+
+    if (!specialScheduleForm.employeeId) {
+      showNotice("Selecciona un empleado antes de crear un horario especial.");
+      return;
+    }
+
+    const blocks =
+      specialScheduleForm.mode === "rest"
+        ? []
+        : [
+            { start: specialScheduleForm.start1, end: specialScheduleForm.end1 },
+            { start: specialScheduleForm.start2, end: specialScheduleForm.end2 },
+          ].filter((block) => block.start && block.end && block.end > block.start);
+
+    if (specialScheduleForm.mode === "custom" && !blocks.length) {
+      showNotice("Configura al menos un bloque válido para el horario especial.");
+      return;
+    }
+
+    const nextData = upsertSpecialSchedule(data, {
+      employeeId: specialScheduleForm.employeeId,
+      date: specialScheduleForm.date,
+      mode: specialScheduleForm.mode,
+      blocks,
+      notes: specialScheduleForm.notes,
+    });
+
+    setData(nextData);
+    showNotice("Horario especial guardado en la agenda.");
+  }
+
+  function handleClearSpecialSchedule() {
+    if (!specialScheduleForm.employeeId || !specialScheduleForm.date) {
+      showNotice("Selecciona una fecha antes de limpiar el horario especial.");
+      return;
+    }
+
+    const employee = employees.find((item) => item.id === specialScheduleForm.employeeId);
+    const baseBlocks = employee
+      ? getRegularShiftBlocksForDate(employee, specialScheduleForm.date)
+      : [];
+
+    setData(deleteSpecialSchedule(data, specialScheduleForm.employeeId, specialScheduleForm.date));
+    setSpecialScheduleForm(
+      createSpecialScheduleDraft(
+        specialScheduleForm.employeeId,
+        specialScheduleForm.date,
+        baseBlocks,
+      ),
+    );
+    showNotice("La fecha volvió a la agenda base.");
   }
 
   async function handleUploadExcel(event) {
@@ -1210,9 +1639,18 @@ function App() {
             selectedDetail={selectedScheduleDetail}
             attendanceForm={attendanceForm}
             setAttendanceForm={setAttendanceForm}
+            manualOvertimeForm={manualOvertimeForm}
+            setManualOvertimeForm={setManualOvertimeForm}
+            specialScheduleForm={specialScheduleForm}
+            setSpecialScheduleForm={setSpecialScheduleForm}
             onSelectControl={handleSelectAttendance}
             onSaveAttendance={handleSaveAttendance}
             onQuickClockIn={handleQuickClockIn}
+            onSaveManualOvertime={handleSaveManualOvertime}
+            onEditManualOvertime={handleEditManualOvertime}
+            onDeleteManualOvertime={handleDeleteManualOvertime}
+            onSaveSpecialSchedule={handleSaveSpecialSchedule}
+            onClearSpecialSchedule={handleClearSpecialSchedule}
           />
         ) : null}
 
