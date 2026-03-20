@@ -21,6 +21,12 @@ import {
   summarizeEmployees,
   SAMPLE_ROWS,
 } from "./lib/overtime";
+import {
+  checkDatabaseHealth,
+  runMigrations,
+  saveSession,
+  saveEmployees,
+} from "./lib/api";
 
 const STORAGE_KEYS = {
   session: "sandeq.session",
@@ -103,10 +109,46 @@ function App() {
   ]);
   const [isPending, startTransition] = useTransition();
   const deferredSearch = useDeferredValue(search);
+  const [dbStatus, setDbStatus] = useState({
+    status: "checking",
+    message: "Verificando conexion...",
+  });
 
   useEffect(() => {
     saveStorage(STORAGE_KEYS.session, session);
   }, [session]);
+
+  // Check database connection on mount
+  useEffect(() => {
+    async function initDatabase() {
+      const health = await checkDatabaseHealth();
+      if (health.status === "connected") {
+        setDbStatus({
+          status: "connected",
+          message: "Base de datos conectada",
+          details: health.database,
+        });
+        pushLog("Conexion a PostgreSQL establecida.", "success");
+      } else {
+        // Try to run migrations first
+        const migrateResult = await runMigrations();
+        if (migrateResult.success) {
+          setDbStatus({
+            status: "connected",
+            message: "Base de datos configurada",
+            tables: migrateResult.tables,
+          });
+          pushLog("Base de datos PostgreSQL configurada correctamente.", "success");
+        } else {
+          setDbStatus({
+            status: "disconnected",
+            message: health.message || "Sin conexion a base de datos",
+          });
+        }
+      }
+    }
+    initDatabase();
+  }, []);
 
   useEffect(() => {
     saveStorage(STORAGE_KEYS.settings, settings);
@@ -245,6 +287,25 @@ function App() {
     pushLog("Se restauro la base demo con tres personas de referencia.", "info");
   }
 
+  async function handleSaveToDatabase() {
+    if (employees.length === 0) {
+      pushLog("No hay empleados para guardar en la base de datos.", "warning");
+      return;
+    }
+
+    if (dbStatus.status !== "connected") {
+      pushLog("No hay conexion a la base de datos.", "error");
+      return;
+    }
+
+    const result = await saveEmployees(employees, session.email, fileName);
+    if (result.success) {
+      pushLog(`${employees.length} empleados guardados en PostgreSQL.`, "success");
+    } else {
+      pushLog(`Error al guardar: ${result.error}`, "error");
+    }
+  }
+
   function handleClearImport() {
     startTransition(() => {
       setRows([]);
@@ -363,6 +424,11 @@ function App() {
         </div>
 
         <div className="hero-stats">
+          <div className={`stat-card ${dbStatus.status === "connected" ? "accent" : dbStatus.status === "checking" ? "" : "error"}`}>
+            <span className="stat-label">Base de datos</span>
+            <strong>{dbStatus.status === "connected" ? "Conectada" : dbStatus.status === "checking" ? "..." : "Desconectada"}</strong>
+            <small>{dbStatus.message}</small>
+          </div>
           <div className="stat-card accent">
             <span className="stat-label">Personas procesadas</span>
             <strong>{formatNumber(summary.totalEmployees, 0)}</strong>
@@ -403,13 +469,18 @@ function App() {
                   onChange={handleImportFile}
                 />
               </label>
-              <button className="button ghost" onClick={handleLoadDemo}>
-                Cargar demo
-              </button>
-              <button className="button ghost" onClick={handleClearImport}>
-                Limpiar
-              </button>
-            </div>
+<button className="button ghost" onClick={handleLoadDemo}>
+  Cargar demo
+  </button>
+  <button className="button ghost" onClick={handleClearImport}>
+  Limpiar
+  </button>
+  {dbStatus.status === "connected" && employees.length > 0 && (
+                <button className="button primary" onClick={handleSaveToDatabase}>
+                  Guardar en BD
+                </button>
+              )}
+  </div>
           </div>
 
           <div className="import-grid">

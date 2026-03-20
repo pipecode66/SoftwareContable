@@ -192,6 +192,15 @@
   border-color: rgba(159, 31, 239, 0.24);
 }
 
+.stat-card.error {
+  background: linear-gradient(180deg, rgba(214, 68, 68, 0.16), rgba(255, 255, 255, 0.92));
+  border-color: rgba(214, 68, 68, 0.24);
+}
+
+.stat-card.error strong {
+  color: #9f2e2e;
+}
+
 .stat-label {
   font-size: 0.9rem;
   color: var(--text-muted);
