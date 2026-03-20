@@ -12,6 +12,7 @@ dist
 dist-ssr
 .next
 .vercel
+supabase/.temp
 *.tsbuildinfo
 .env
 .env.local

@@ -399,7 +399,7 @@ insert into public.vacation_records (
   id, company_id, employee_id, record_type, start_date, end_date, days, enjoyed_days, pending_days, paid_amount, notes, created_by, updated_by
 )
 values
-  ('g1000000-0000-4000-8000-000000000001','aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','a1000000-0000-4000-8000-000000000010','programadas','2026-04-01','2026-04-05',5,0,10,0,'Bloque aprobado','11111111-1111-4111-8111-111111111111','11111111-1111-4111-8111-111111111111');
+  ('a7000000-0000-4000-8000-000000000001','aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','a1000000-0000-4000-8000-000000000010','programadas','2026-04-01','2026-04-05',5,0,10,0,'Bloque aprobado','11111111-1111-4111-8111-111111111111','11111111-1111-4111-8111-111111111111');
 
 delete from public.attendance_adjustments where company_id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 insert into public.attendance_adjustments (
@@ -407,14 +407,14 @@ insert into public.attendance_adjustments (
   impact_salary, notes, metadata, created_by, updated_by
 )
 values
-  ('h1000000-0000-4000-8000-000000000001','aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','a1000000-0000-4000-8000-000000000011','2026-03-14','late','08:00','08:30',0.5,true,'Ingreso tardío autorizado','{}','11111111-1111-4111-8111-111111111111','11111111-1111-4111-8111-111111111111');
+  ('a8000000-0000-4000-8000-000000000001','aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','a1000000-0000-4000-8000-000000000011','2026-03-14','late','08:00','08:30',0.5,true,'Ingreso tardío autorizado','{}','11111111-1111-4111-8111-111111111111','11111111-1111-4111-8111-111111111111');
 
 delete from public.additional_deductions where company_id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 insert into public.additional_deductions (
   id, company_id, employee_id, concept_name, amount, recurrence, applies_from, notes, created_by, updated_by
 )
 values
-  ('i1000000-0000-4000-8000-000000000001','aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','a1000000-0000-4000-8000-000000000003','Préstamo caja menor',80000,'monthly','2026-03-01','Descuento interno','11111111-1111-4111-8111-111111111111','11111111-1111-4111-8111-111111111111');
+  ('a9000000-0000-4000-8000-000000000001','aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','a1000000-0000-4000-8000-000000000003','Préstamo caja menor',80000,'monthly','2026-03-01','Descuento interno','11111111-1111-4111-8111-111111111111','11111111-1111-4111-8111-111111111111');
 
 delete from public.demo_template_snapshots where source_company_id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 insert into public.demo_template_snapshots (source_company_id, module, version_label, payload, created_by)
