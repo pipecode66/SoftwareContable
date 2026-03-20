@@ -7,6 +7,7 @@ Sistema integral de nómina configurable para Colombia sobre `Next.js + React + 
 - Mantiene el motor heredado de horas extras y recargos en [src/lib/overtime.js](/c:/Users/juanitou/Documents/TRABAJO/SoftwareContable/repo-remote/src/lib/overtime.js).
 - Conserva la SPA anterior en [src/App.jsx](/c:/Users/juanitou/Documents/TRABAJO/SoftwareContable/repo-remote/src/App.jsx) como referencia funcional durante la migración.
 - Agrega una nueva capa persistente multiempresa en `app/` con Auth, RLS, onboarding, catálogo de nómina, empleados, novedades, incapacidades, vacaciones, descuentos, simulador y auditoría.
+- Los entrypoints heredados de Vite fueron retirados para que el repositorio se detecte como `Next.js` de forma más clara en despliegues nuevos.
 
 ## Stack
 
