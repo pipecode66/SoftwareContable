@@ -16,31 +16,12 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
     <main className="login-shell">
       <section className="login-card">
         <div className="login-hero">
-          <p className="eyebrow">KAIKO Payroll</p>
-          <h1>Nómina integral configurable para Colombia</h1>
+          <p className="eyebrow">Software empresarial</p>
+          <h1>KAIKO PAYROLL</h1>
           <p className="hero-kicker">
-            Extiende el sistema actual de horas extras con capas reales de seguridad social,
-            prestaciones, novedades, liquidación, auditoría y multiempresa sobre Supabase.
+            Plataforma integral para administrar nómina, horas extras, recargos, novedades,
+            empleados y configuración laboral para empresas en Colombia.
           </p>
-
-          <div className="login-grid">
-            <article className="mini-stat">
-              <span>Cuenta demo</span>
-              <strong>demo@sandeli.com</strong>
-            </article>
-            <article className="mini-stat">
-              <span>Motor heredado</span>
-              <strong>Horas extras + recargos</strong>
-            </article>
-            <article className="mini-stat">
-              <span>Persistencia</span>
-              <strong>Next.js + Supabase</strong>
-            </article>
-            <article className="mini-stat">
-              <span>Seguridad</span>
-              <strong>Auth + RLS multiempresa</strong>
-            </article>
-          </div>
         </div>
 
         <div className="login-panel">
@@ -48,8 +29,8 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
             <p className="eyebrow">Acceso seguro</p>
             <h2>Inicia sesión</h2>
             <p className="muted-copy">
-              Usa la cuenta demo para explorar la plantilla maestra o entra con otra cuenta para
-              clonar la configuración o personalizarla.
+              Ingresa con tu cuenta para acceder a la operación, la configuración y el control
+              integral de nómina de tu empresa.
             </p>
           </div>
 
@@ -79,8 +60,8 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
           </form>
 
           <div className="inline-actions">
-            <Badge tone="accent">Demo sembrada por SQL</Badge>
-            <Badge tone="neutral">Sin datos quemados en frontend</Badge>
+            <Badge tone="accent">Entorno corporativo</Badge>
+            <Badge tone="neutral">Gestión centralizada en Supabase</Badge>
           </div>
         </div>
       </section>

@@ -87,10 +87,19 @@ body {
 }
 
 .login-hero {
+  display: grid;
+  gap: 16px;
+  align-content: center;
   background:
     linear-gradient(180deg, rgba(159, 31, 238, 0.18), rgba(164, 28, 130, 0.12)),
     linear-gradient(135deg, rgba(159, 147, 231, 0.06), rgba(220, 215, 212, 0.02));
   border-right: 1px solid var(--line);
+}
+
+.login-hero h1 {
+  font-size: clamp(2.8rem, 5vw, 4.5rem);
+  line-height: 0.95;
+  letter-spacing: 0.08em;
 }
 
 .login-panel {
