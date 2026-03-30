@@ -1,4 +1,4 @@
-import { cache } from "react";
+import { unstable_noStore as noStore } from "next/cache";
 import { redirect } from "next/navigation";
 import { createClient } from "@/src/lib/supabase/server";
 import type { AppRole, Database } from "@/src/lib/supabase/types";
@@ -19,7 +19,9 @@ export type AuthContext = {
   activeRole: AppRole | null;
 };
 
-export const getAuthContext = cache(async (): Promise<AuthContext | null> => {
+export async function getAuthContext(): Promise<AuthContext | null> {
+  noStore();
+
   if (!isSupabaseConfigured()) {
     return null;
   }
@@ -61,7 +63,7 @@ export const getAuthContext = cache(async (): Promise<AuthContext | null> => {
     activeCompanyId: activeMembership?.company_id ?? null,
     activeRole: activeMembership?.role ?? null,
   };
-});
+}
 
 export async function requireAuth() {
   const context = await getAuthContext();
