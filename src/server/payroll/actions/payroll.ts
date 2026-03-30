@@ -6,7 +6,11 @@ import { z } from "zod";
 import { createClient } from "@/src/lib/supabase/server";
 import { requireAuth, requireCompanyContext } from "@/src/server/auth/context";
 import { calculateEmployeeSimulation } from "@/src/server/payroll/calculator";
-import { getPayrollReadModel, listCompanyRows, listEmployees } from "@/src/server/payroll/repository";
+import { getPayrollReadModel, getPayrollSettings, listCompanyRows, listEmployees } from "@/src/server/payroll/repository";
+import {
+  buildPayrollSettingsConfig,
+  resolvePayrollSettingsConfig,
+} from "@/src/server/payroll/configuration";
 import {
   CUSTOM_SETUP_STEPS,
   DEFAULT_DEPARTMENTS,
@@ -31,6 +35,18 @@ const settingsSchema = z.object({
   daytime_start: z.string().min(4),
   daytime_end: z.string().min(4),
   night_start: z.string().min(4),
+});
+
+const configurationSectionSchema = z.object({
+  section_key: z.enum([
+    "company",
+    "overtime",
+    "social_security",
+    "benefits",
+    "novelties",
+    "compensation",
+    "organization",
+  ]),
 });
 
 const employeeSchema = z.object({
@@ -151,6 +167,106 @@ function slugify(value: string) {
     .replace(/^-+|-+$/g, "");
 }
 
+function getTextValue(formData: FormData, key: string, fallback = "") {
+  const value = formData.get(key);
+  return typeof value === "string" && value.trim() ? value.trim() : fallback;
+}
+
+function getNumericValue(formData: FormData, key: string, fallback: number) {
+  const rawValue = formData.get(key);
+  const value = Number(rawValue);
+  return Number.isFinite(value) ? value : fallback;
+}
+
+function getCheckboxValue(formData: FormData, key: string, fallback = false) {
+  const value = formData.get(key);
+  if (value === null) return fallback;
+  return value === "on" || value === "true" || value === "1";
+}
+
+function buildModuleConfigurationFromFormData(formData: FormData) {
+  return {
+    company: {
+      workdayType: getTextValue(formData, "company_workday_type", "ordinaria"),
+      restDayPolicy: getTextValue(formData, "company_rest_day_policy", "individual"),
+      approvalFlow: getTextValue(formData, "company_approval_flow", "company_admin"),
+      periodCutoff: getTextValue(formData, "company_period_cutoff", "quincenal"),
+    },
+    overtime: {
+      enabled: getCheckboxValue(formData, "overtime_enabled", true),
+      requiresAuthorization: getCheckboxValue(formData, "overtime_requires_authorization", true),
+      dailyCapHours: getNumericValue(formData, "overtime_daily_cap_hours", 2),
+      weeklyCapHours: getNumericValue(formData, "overtime_weekly_cap_hours", 12),
+      nightSurchargeEnabled: getCheckboxValue(formData, "overtime_night_surcharge_enabled", true),
+      sundayEnabled: getCheckboxValue(formData, "overtime_sunday_enabled", true),
+      festiveEnabled: getCheckboxValue(formData, "overtime_festive_enabled", true),
+      source: getTextValue(formData, "overtime_source", "attendance_and_manual"),
+    },
+    social_security: {
+      enabled: getCheckboxValue(formData, "social_security_enabled", true),
+      healthEnabled: getCheckboxValue(formData, "social_security_health_enabled", true),
+      pensionEnabled: getCheckboxValue(formData, "social_security_pension_enabled", true),
+      solidarityFundEnabled: getCheckboxValue(formData, "social_security_solidarity_enabled", true),
+      parafiscalsEnabled: getCheckboxValue(formData, "parafiscals_enabled", true),
+      compensationFundEnabled: getCheckboxValue(formData, "parafiscals_compensation_enabled", true),
+      icbfEnabled: getCheckboxValue(formData, "parafiscals_icbf_enabled", true),
+      senaEnabled: getCheckboxValue(formData, "parafiscals_sena_enabled", true),
+      defaultArlRiskClass: getNumericValue(formData, "social_security_default_arl_risk_class", 1),
+    },
+    benefits: {
+      enabled: getCheckboxValue(formData, "benefits_enabled", true),
+      severanceEnabled: getCheckboxValue(formData, "benefits_severance_enabled", true),
+      severanceInterestEnabled: getCheckboxValue(formData, "benefits_severance_interest_enabled", true),
+      serviceBonusEnabled: getCheckboxValue(formData, "benefits_service_bonus_enabled", true),
+      vacationAccrualEnabled: getCheckboxValue(formData, "benefits_vacation_accrual_enabled", true),
+      bonusEnabled: getCheckboxValue(formData, "benefits_bonus_enabled", true),
+      commissionsEnabled: getCheckboxValue(formData, "benefits_commissions_enabled", true),
+      deductionsEnabled: getCheckboxValue(formData, "benefits_deductions_enabled", true),
+    },
+    novelties: {
+      incapacityEnabled: getCheckboxValue(formData, "novelties_incapacity_enabled", true),
+      incapacitySupportsRequired: getCheckboxValue(formData, "novelties_incapacity_supports_required", true),
+      vacationsEnabled: getCheckboxValue(formData, "novelties_vacations_enabled", true),
+      absencesEnabled: getCheckboxValue(formData, "novelties_absences_enabled", true),
+      unjustifiedAbsenceDiscount: getCheckboxValue(
+        formData,
+        "novelties_unjustified_absence_discount",
+        true,
+      ),
+      attendanceAdjustmentsEnabled: getCheckboxValue(
+        formData,
+        "novelties_attendance_adjustments_enabled",
+        true,
+      ),
+      latenessTrackingEnabled: getCheckboxValue(formData, "novelties_lateness_tracking_enabled", true),
+    },
+    compensation: {
+      transportAllowanceEnabled: getCheckboxValue(formData, "transport_allowance_enabled", true),
+      transportAllowanceMode: getTextValue(
+        formData,
+        "compensation_transport_allowance_mode",
+        "legal_threshold",
+      ),
+      transportAllowanceProrated: getCheckboxValue(
+        formData,
+        "compensation_transport_allowance_prorated",
+        true,
+      ),
+      bonusDefaultType: getTextValue(formData, "compensation_bonus_default_type", "non_salary"),
+      commissionSettlement: getTextValue(formData, "compensation_commission_settlement", "quincenal"),
+      overtimePaymentMode: getTextValue(formData, "compensation_overtime_payment_mode", "payroll_period"),
+    },
+    organization: {
+      seedDefaultPositions: getCheckboxValue(formData, "organization_seed_default_positions", true),
+      seedDefaultDepartments: getCheckboxValue(formData, "organization_seed_default_departments", true),
+      employeeOverridesEnabled: getCheckboxValue(formData, "organization_employee_overrides_enabled", true),
+      customConceptsEnabled: getCheckboxValue(formData, "organization_custom_concepts_enabled", true),
+      legalParametersEditable: getCheckboxValue(formData, "organization_legal_parameters_editable", true),
+      multiAreaEmployeesEnabled: getCheckboxValue(formData, "organization_multi_area_employees_enabled", false),
+    },
+  };
+}
+
 async function ensureManagerAccess() {
   const context = await requireCompanyContext();
   if (!["super_admin", "company_admin"].includes(context.activeRole || "")) {
@@ -248,14 +364,15 @@ export async function cloneDemoConfigAction() {
 export async function initializeCustomPayrollAction(formData: FormData) {
   const context = await ensureManagerAccess();
   const supabase = await createClient();
+  const modules = buildModuleConfigurationFromFormData(formData);
   const overrides = settingsSchema.parse({
     payroll_frequency: formData.get("payroll_frequency") || DEFAULT_PAYROLL_SETTINGS.payroll_frequency,
     weekly_max_hours: formData.get("weekly_max_hours") || DEFAULT_PAYROLL_SETTINGS.weekly_max_hours,
-    overtime_enabled: formData.get("overtime_enabled") === "on",
-    social_security_enabled: formData.get("social_security_enabled") === "on",
-    parafiscals_enabled: formData.get("parafiscals_enabled") === "on",
-    benefits_enabled: formData.get("benefits_enabled") === "on",
-    transport_allowance_enabled: formData.get("transport_allowance_enabled") === "on",
+    overtime_enabled: modules.overtime.enabled,
+    social_security_enabled: modules.social_security.enabled,
+    parafiscals_enabled: modules.social_security.parafiscalsEnabled,
+    benefits_enabled: modules.benefits.enabled,
+    transport_allowance_enabled: modules.compensation.transportAllowanceEnabled,
     daytime_start: formData.get("daytime_start") || DEFAULT_PAYROLL_SETTINGS.daytime_start,
     daytime_end: formData.get("daytime_end") || DEFAULT_PAYROLL_SETTINGS.daytime_end,
     night_start: formData.get("night_start") || DEFAULT_PAYROLL_SETTINGS.night_start,
@@ -268,6 +385,7 @@ export async function initializeCustomPayrollAction(formData: FormData) {
     config: {
       setup_steps: CUSTOM_SETUP_STEPS,
       setup_mode: "custom",
+      modules,
     },
     created_by: context.userId,
     updated_by: context.userId,
@@ -439,6 +557,93 @@ export async function upsertPayrollSettingsAction(formData: FormData) {
 
   await writeAuditLog(context.activeCompanyId!, context.userId, "settings", "upsert", undefined, parsed);
   revalidatePath("/payroll/settings");
+}
+
+export async function updatePayrollConfigurationSectionAction(formData: FormData) {
+  const context = await ensureManagerAccess();
+  const parsed = configurationSectionSchema.parse({
+    section_key: formData.get("section_key"),
+  });
+
+  const supabase = await createClient();
+  const current = await getPayrollSettings(context.activeCompanyId!);
+  const modules = buildModuleConfigurationFromFormData(formData);
+  const nextConfig = buildPayrollSettingsConfig(current?.config, {
+    setup_mode: current?.config && resolvePayrollSettingsConfig(current.config).setup_mode
+      ? resolvePayrollSettingsConfig(current.config).setup_mode
+      : "custom",
+    modules: {
+      [parsed.section_key]: modules[parsed.section_key],
+    },
+  });
+
+  const basePayload: Record<string, unknown> = {
+    company_id: context.activeCompanyId!,
+    updated_by: context.userId,
+    config: nextConfig,
+  };
+
+  if (parsed.section_key === "company") {
+    Object.assign(basePayload, {
+      payroll_frequency: getTextValue(formData, "payroll_frequency", current?.payroll_frequency ?? "quincenal"),
+      weekly_max_hours: getNumericValue(formData, "weekly_max_hours", Number(current?.weekly_max_hours ?? 46)),
+      daytime_start: getTextValue(formData, "daytime_start", String(current?.daytime_start ?? "06:00")),
+      daytime_end: getTextValue(formData, "daytime_end", String(current?.daytime_end ?? "21:00")),
+      night_start: getTextValue(formData, "night_start", String(current?.night_start ?? "21:00")),
+    });
+  }
+
+  if (parsed.section_key === "overtime") {
+    Object.assign(basePayload, {
+      overtime_enabled: modules.overtime.enabled,
+    });
+  }
+
+  if (parsed.section_key === "social_security") {
+    Object.assign(basePayload, {
+      social_security_enabled: modules.social_security.enabled,
+      parafiscals_enabled: modules.social_security.parafiscalsEnabled,
+    });
+  }
+
+  if (parsed.section_key === "benefits") {
+    Object.assign(basePayload, {
+      benefits_enabled: modules.benefits.enabled,
+    });
+  }
+
+  if (parsed.section_key === "compensation") {
+    Object.assign(basePayload, {
+      transport_allowance_enabled: modules.compensation.transportAllowanceEnabled,
+    });
+  }
+
+  if (current?.id) {
+    await supabase.from("payroll_settings").update(basePayload).eq("id", current.id);
+  } else {
+    await supabase.from("payroll_settings").insert({
+      ...DEFAULT_PAYROLL_SETTINGS,
+      ...basePayload,
+      country_code: DEFAULT_PAYROLL_SETTINGS.country_code,
+      created_by: context.userId,
+    });
+  }
+
+  await writeAuditLog(
+    context.activeCompanyId!,
+    context.userId,
+    "settings",
+    "update_section",
+    current?.id,
+    {
+      section: parsed.section_key,
+      value: modules[parsed.section_key],
+    },
+  );
+
+  revalidatePath("/payroll");
+  revalidatePath("/payroll/settings");
+  revalidatePath("/setup/payroll");
 }
 
 export async function createConceptAction(formData: FormData) {
