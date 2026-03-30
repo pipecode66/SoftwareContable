@@ -29,8 +29,8 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
             <p className="eyebrow">Acceso seguro</p>
             <h2>Inicia sesión</h2>
             <p className="muted-copy">
-              Ingresa con tu cuenta para acceder a la operación, la configuración y el control
-              integral de nómina de tu empresa.
+              Ingresa tu correo electrónico y tu contraseña para acceder al panel principal,
+              consultar la información de tu empresa y gestionar la operación de nómina.
             </p>
           </div>
 
@@ -58,11 +58,6 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
               Ingresar al sistema
             </button>
           </form>
-
-          <div className="inline-actions">
-            <Badge tone="accent">Entorno corporativo</Badge>
-            <Badge tone="neutral">Gestión centralizada en Supabase</Badge>
-          </div>
         </div>
       </section>
     </main>
